@@ -1,0 +1,13 @@
+{
+  "name": "admin-hub-pace-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-env.js",
+    "build:demo": "node scripts/build-env.js --env demo",
+    "build:production": "node scripts/build-env.js --env production",
+    "test": "node --test",
+    "start": "node server.js"
+  }
+}
