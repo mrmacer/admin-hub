@@ -42,7 +42,5 @@ export const CONFIG = {
 };
 
 export const MODULES = [
-  { id: "pace", label: "PACE", description: "Visits, usage patterns, duration, interventions and activity.", active: true },
-  { id: "discipline", label: "Discipline", description: "Referral and follow-up intelligence.", active: false },
-  { id: "support", label: "Student Support", description: "Operational support tracking.", active: false }
+  { id: "pace", label: "PACE", description: "Visits, usage patterns, duration, interventions, activity and follow-up.", active: true }
 ];

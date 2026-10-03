@@ -21,4 +21,4 @@ createServer(async (request, response) => {
   } catch {
     response.writeHead(404, { "Content-Type": "text/plain" }); response.end("Not found");
   }
-}).listen(port, () => console.log(`Admin Hub running at http://localhost:${port}/?demo=1`));
+}).listen(port, () => console.log(`Admin Hub running at http://localhost:${port}/`));

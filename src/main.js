@@ -4,10 +4,12 @@ import { PACE_DATA } from "./modules/pace/pace-data.js";
 import { renderApp, renderError, renderLoading, renderLogin, renderUnauthorized } from "./app-shell.js";
 import { currentRoute, go } from "./router.js";
 import { rangeFromControls } from "./components/date-range.js";
+import { applyFollowUpAction, seedFollowUps } from "./modules/pace/pace-follow-up.js";
+import { localDateString } from "./date-utils.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
-const state = { demo: APP_ENV === "demo", range: dateRangeForPreset("today"), visits: [], userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null };
+const state = { demo: APP_ENV === "demo", range: dateRangeForPreset("today"), visits: [], followUps: {}, followUpsSeeded: false, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null };
 
 function paint() { root.innerHTML = renderApp(state); }
 
@@ -23,7 +25,9 @@ async function loadMsalForProduction() {
 }
 
 async function loadData(force = false) {
-  const result = await PACE_DATA.load(state.range, force); state.visits = result.visits; paint();
+  const result = await PACE_DATA.load(state.range, force); state.visits = result.visits;
+  if (state.demo && !state.followUpsSeeded) { state.followUps = seedFollowUps(state.visits); state.followUpsSeeded = true; }
+  paint();
 }
 
 async function boot() {
@@ -50,6 +54,16 @@ async function boot() {
 }
 
 document.addEventListener("click", event => {
+  const followUpAction = event.target.closest("[data-follow-up-action]");
+  if (followUpAction && state.demo) {
+    const activeVisit = state.visits.find(item => item.id === state.activeVisitId);
+    if (!activeVisit) return;
+    const note = root.querySelector("#followUpNote")?.value ?? "";
+    const action = followUpAction.dataset.followUpAction;
+    const actor = action === "start-review" ? "Morgan Reed — Behavior Specialist" : "Jordan Ellis — Administrator";
+    try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); paint(); } catch (error) { console.error(error); }
+    return;
+  }
   const close = event.target.closest("[data-close-modal]");
   if (close) { state.activeVisitId = null; paint(); return; }
   const visit = event.target.closest("[data-visit]");
