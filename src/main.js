@@ -6,6 +6,7 @@ import { currentRoute, go } from "./router.js";
 import { rangeFromControls } from "./components/date-range.js";
 import { applyFollowUpAction } from "./modules/pace/pace-follow-up.js";
 import { localDateString } from "./date-utils.js";
+import { esc } from "./components/html.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
@@ -43,7 +44,7 @@ async function boot() {
     state.userName = AUTH.displayName;
     await loadData();
   } catch (error) {
-    console.error(error); root.innerHTML = renderError("Admin Hub could not load", "We could not load the workspace right now. Check your connection and try again.");
+    console.error(error); root.innerHTML = renderError("Admin Hub could not load", `We could not load the workspace right now. ${esc(error?.message || "Check your connection and try again.")}`);
   }
 }
 

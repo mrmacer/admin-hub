@@ -19,10 +19,10 @@ export function mapGraphItemsToDisplay(items, schema) {
 
 export const GRAPH = {
   base: "https://graph.microsoft.com/v1.0", siteId: null, listIds: new Map(), schemas: new Map(),
-  async get(path) {
+  async get(path, headers = {}) {
     const token = await this.token();
-    const response = await fetch(`${this.base}/${path}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!response.ok) throw new Error(`Microsoft Graph request failed (${response.status}).`);
+    const response = await fetch(`${this.base}/${path}`, { headers: { Authorization: `Bearer ${token}`, ...headers } });
+    if (!response.ok) { const detail = (await response.json().catch(() => null))?.error?.message; throw new Error(`Microsoft Graph request failed (${response.status})${detail ? `: ${detail}` : "."}`); }
     return response.json();
   },
   async token() { return window.AUTH_TOKEN ?? (await window.AUTH.acquireGraphToken?.()); },
@@ -44,12 +44,14 @@ export const GRAPH = {
   },
   async getListItems(listName, options = {}) {
     const siteId = await this.getSiteId(); const listId = await this.getListId(listName); const schema = await this.getSchema(listName);
-    let path = `sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200`;
+    let path = `sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200`; let headers = {};
     if (options.from && options.to && schema.Date) {
       const filter = `fields/${schema.Date} ge '${toGraphUtcBoundary(options.from)}' and fields/${schema.Date} lt '${toGraphUtcBoundary(options.to, true)}'`;
       path += `&$filter=${encodeURIComponent(filter)}`;
+      // Date is not an indexed column; SharePoint rejects the filter without this header.
+      headers = { Prefer: "HonorNonIndexedQueriesWarningMayFailRandomly" };
     }
-    const items = await fetchAllGraphPages(pathValue => this.get(pathValue), path, this.base);
+    const items = await fetchAllGraphPages(pathValue => this.get(pathValue, headers), path, this.base);
     return mapGraphItemsToDisplay(items, schema);
   },
   async getPaceVisits(range) { return this.getListItems(CONFIG.lists.paceVisits, range); },
