@@ -45,7 +45,7 @@ to a stricter policy during the authorization cutover if desired.
 
 For a future production follow-up workflow, consider a separate permission
 such as `PACE Follow-Up` with Manage access. Do not modify `IEP_App_Users` as
-part of the demo experiment.
+part of this project.
 
 ## Application structure
 
@@ -57,13 +57,12 @@ src/
   graph.js               Read-only Graph client with paging and schema mapping
   authorization.js       IEP_App_Users decision policy
   date-utils.js          Local calendar and Graph boundary handling
-  demo-data.js           Synthetic, non-identifying demo records
   router.js / app-shell.js / main.js
   components/            Escaping, cards, empty states, date-range control
   modules/pace/
-    pace-data.js         Demo/Graph data adapter
+    pace-data.js         Graph data adapter for IEP_Pace_Visits
     pace-analytics.js    Pure normalization and aggregation functions
-    pace-follow-up.js    Separate synthetic review-state model
+    pace-follow-up.js    Separate review-state model
     pace-views.js        Overview, students, detail, and activity UI
 test/                    Node built-in test suite
 ```
@@ -81,12 +80,12 @@ and derives same-day minutes from Time In / Time Out when it is absent.
 This remains a client-side delegated Graph architecture. UI authorization is
 not row-level data security. The app does not broaden SharePoint access, does
 not add secrets, and contains no browser-side application secret. Admin Hub is
-read-only against `IEP_Pace_Visits`; the demo follow-up state is separate,
-synthetic, in-memory browser state and resets on refresh.
+read-only against `IEP_Pace_Visits`. The follow-up workflow is switched off
+(`CONFIG.followUp.enabled`) until it has a SharePoint list to save to.
 
-## PACE follow-up experiment
+## PACE follow-up
 
-The source PACE visit is historical and immutable in this dashboard. The demo
+The source PACE visit is historical and immutable in this dashboard. The
 follow-up record is keyed by the PACE visit item ID and contains only:
 
 - Status: `Needs Review`, `In Review`, or `Follow-Up Complete`
@@ -95,10 +94,11 @@ follow-up record is keyed by the PACE visit item ID and contains only:
 - Follow-Up Note
 - Completed By / Completed At
 
-The seeded demo has 6 Needs Review, 3 In Review, and 7 Follow-Up Complete
-examples across 184 visits. The remaining 168 visits have no follow-up. Both
-fictional administrators and behavior specialists can perform the demo actions
-without a role matrix or real Microsoft identity.
+Follow-up is disabled by `CONFIG.followUp.enabled = false` in `src/config.js`.
+While it is off, the visit detail shows that follow-up is not yet connected and
+the overview hides the follow-up queue and counts. Enable it only after
+`IEP_Pace_Follow_Up` exists and the app can save to it; otherwise follow-up
+state would live only in browser memory and be lost on refresh.
 
 ## Proposed production follow-up data model
 
@@ -120,45 +120,16 @@ or reporting requirement proves it necessary. The PACE Visit Item ID should be
 the canonical relationship. Index `PACE Visit Item ID`, `Status`, and the
 date fields if production queue queries require them.
 
-## Environments
+## Deployment
 
-Admin Hub has two explicit build environments. The environment is written to
-`src/generated-environment.js` by `scripts/build-env.js`; it is never selected
-from a URL query string or browser storage.
+Admin Hub is a static site with no build step. Every load signs in through
+Microsoft Entra, checks `IEP_Users2` and `IEP_App_Users`, and reads
+`IEP_Pace_Visits` from the `IEP_Skook` SharePoint site through Microsoft Graph.
 
-### DEMO
-
-- Synthetic data only.
-- No Microsoft authentication, Graph, SharePoint, or `IEP_App_Users` access.
-- Intended for stakeholder review and safe experimentation.
-- The Vercel demo project is hard-pinned to `npm run build:demo`.
-
-### PRODUCTION
-
-- Controlled Entra authentication.
-- Explicit Admin Hub/module authorization.
-- Real `IEP_Pace_Visits` SharePoint data.
-- Not deployed by this project setup.
-
-Changing or removing query parameters, editing localStorage/sessionStorage, or
-forcing Graph failures cannot switch a demo build into production. Unknown
-build environments fail closed.
-
-## Local environments
-
-```bash
-# Safe synthetic demo build and local server
-npm run build:demo
-npm start
-
-# Intentional production-capable build; do not share or deploy casually
-npm run build:production
-npm start
-```
-
-The checked-in generated environment is always safe demo mode. Run
-`npm run build:demo` again before returning the working tree to demo status
-after any local production build.
+Sign-in redirects back to `window.location.origin`, so every address the app is
+served from (the Vercel URL and `http://localhost:4173` for local work) must be
+registered as a Single-page application redirect URI on the Entra app
+registration in `CONFIG.auth.clientId`.
 
 ## Local run
 
@@ -174,10 +145,10 @@ service already owns port 4173, use `PORT=4174 npm start` and open
 
 ## Review screenshots
 
-- [Desktop demo review](review-desktop.png)
-- [iPad portrait demo review](review-ipad.png)
+- [Desktop review](review-desktop.png)
+- [iPad portrait review](review-ipad.png)
 
 ## Recommended next step
 
-Review the public synthetic demo with stakeholders before approving the four
-`IEP_App_Users` authorization columns for a future production deployment.
+Approve the `IEP_App_Users` authorization columns, then create
+`IEP_Pace_Follow_Up` and connect the follow-up workflow to it.

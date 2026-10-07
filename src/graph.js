@@ -1,9 +1,7 @@
 import { CONFIG } from "./config.js";
 import { toGraphUtcBoundary } from "./date-utils.js";
-import { APP_ENV } from "./environment.js";
 
 function writableReadOnly() { throw new Error("Admin Hub is read-only: PACE write operations are disabled."); }
-function assertProductionGraph() { if (APP_ENV !== "production") throw new Error("Demo environment safety block: Microsoft Graph is disabled."); }
 
 export async function fetchAllGraphPages(fetchPage, firstPath, base = "https://graph.microsoft.com/v1.0") {
   const items = []; let path = firstPath;
@@ -22,16 +20,14 @@ export function mapGraphItemsToDisplay(items, schema) {
 export const GRAPH = {
   base: "https://graph.microsoft.com/v1.0", siteId: null, listIds: new Map(), schemas: new Map(),
   async get(path) {
-    assertProductionGraph();
     const token = await this.token();
     const response = await fetch(`${this.base}/${path}`, { headers: { Authorization: `Bearer ${token}` } });
     if (!response.ok) throw new Error(`Microsoft Graph request failed (${response.status}).`);
     return response.json();
   },
-  async token() { assertProductionGraph(); return window.AUTH_TOKEN ?? (await window.AUTH.acquireGraphToken?.()); },
-  async getSiteId() { assertProductionGraph(); if (!this.siteId) this.siteId = (await this.get(`sites/${CONFIG.sitePath}`)).id; return this.siteId; },
+  async token() { return window.AUTH_TOKEN ?? (await window.AUTH.acquireGraphToken?.()); },
+  async getSiteId() { if (!this.siteId) this.siteId = (await this.get(`sites/${CONFIG.sitePath}`)).id; return this.siteId; },
   async getListId(listName) {
-    assertProductionGraph();
     if (this.listIds.has(listName)) return this.listIds.get(listName);
     const siteId = await this.getSiteId();
     const data = await this.get(`sites/${siteId}/lists?$select=id,name,displayName`);
@@ -40,7 +36,6 @@ export const GRAPH = {
     this.listIds.set(listName, match.id); return match.id;
   },
   async getSchema(listName) {
-    assertProductionGraph();
     if (this.schemas.has(listName)) return this.schemas.get(listName);
     const siteId = await this.getSiteId(); const listId = await this.getListId(listName);
     const data = await this.get(`sites/${siteId}/lists/${listId}/columns?$select=name,displayName`);
@@ -48,7 +43,6 @@ export const GRAPH = {
     this.schemas.set(listName, schema); return schema;
   },
   async getListItems(listName, options = {}) {
-    assertProductionGraph();
     const siteId = await this.getSiteId(); const listId = await this.getListId(listName); const schema = await this.getSchema(listName);
     let path = `sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200`;
     if (options.from && options.to && schema.Date) {

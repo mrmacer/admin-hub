@@ -1,8 +1,3 @@
-import { APP_ENV, IS_DEMO } from "./environment.js";
-
-export { APP_ENV };
-export const APP_MODE = APP_ENV;
-
 export const CONFIG = {
   appName: "Admin Hub",
   moduleName: "PACE Dashboard",
@@ -13,7 +8,9 @@ export const CONFIG = {
     authority: "https://login.microsoftonline.com/3276761c-22db-462b-a930-172d155bd795",
     scopes: ["User.Read", "Sites.Read.All"]
   },
-  demoStorageKey: "adminHubPaceDemoData",
+  // Follow-up stays off until the IEP_Pace_Follow_Up SharePoint list exists;
+  // until then follow-up state would only live in browser memory.
+  followUp: { enabled: false },
   authorization: {
     enforceExplicitFlag: false,
     adminHubFields: ["Admin Hub", "Admin Hub Access", "AdminHub", "adminHub"],
