@@ -22,8 +22,9 @@ export const AUTH = {
   get email() { return this.account?.username ?? ""; },
   async acquireGraphToken() {
     if (!this.client || !this.account) throw new Error("You are not signed in.");
-    const response = await this.client.acquireTokenSilent({ scopes: CONFIG.auth.scopes, account: this.account });
-    return response.accessToken;
+    const request = { scopes: CONFIG.auth.scopes, account: this.account };
+    try { return (await this.client.acquireTokenSilent(request)).accessToken; }
+    catch { await this.client.acquireTokenRedirect(request); return null; }
   },
   login() { this.client?.loginRedirect({ scopes: CONFIG.auth.scopes }); },
   logout() { if (this.client && this.account) return this.client.logoutRedirect({ account: this.account, postLogoutRedirectUri: window.location.origin }); }
