@@ -1,5 +1,4 @@
 {
-  "buildCommand": "npm run build:demo",
   "outputDirectory": ".",
   "framework": null,
   "cleanUrls": true

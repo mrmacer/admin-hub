@@ -1,19 +1,19 @@
-import { APP_ENV } from "./environment.js";
+import { CONFIG } from "./config.js";
 import { dateRangeForPreset } from "./date-utils.js";
 import { PACE_DATA } from "./modules/pace/pace-data.js";
 import { renderApp, renderError, renderLoading, renderLogin, renderUnauthorized } from "./app-shell.js";
 import { currentRoute, go } from "./router.js";
 import { rangeFromControls } from "./components/date-range.js";
-import { applyFollowUpAction, seedFollowUps } from "./modules/pace/pace-follow-up.js";
+import { applyFollowUpAction } from "./modules/pace/pace-follow-up.js";
 import { localDateString } from "./date-utils.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
-const state = { demo: APP_ENV === "demo", range: dateRangeForPreset("today"), visits: [], followUps: {}, followUpsSeeded: false, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null };
+const state = { followUpEnabled: CONFIG.followUp.enabled, range: dateRangeForPreset("today"), visits: [], followUps: {}, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null };
 
 function paint() { root.innerHTML = renderApp(state); }
 
-async function loadMsalForProduction() {
+async function loadMsal() {
   if (window.msal) return;
   await new Promise((resolve, reject) => {
     const script = document.createElement("script");
@@ -26,41 +26,35 @@ async function loadMsalForProduction() {
 
 async function loadData(force = false) {
   const result = await PACE_DATA.load(state.range, force); state.visits = result.visits;
-  if (state.demo && !state.followUpsSeeded) { state.followUps = seedFollowUps(state.visits); state.followUpsSeeded = true; }
   paint();
 }
 
 async function boot() {
   root.innerHTML = renderLoading();
   try {
-    if (APP_ENV === "invalid") { root.innerHTML = renderError("Admin Hub environment is invalid", "This build was stopped safely. Rebuild with an explicit demo or production environment."); return; }
-    if (APP_ENV === "production") {
-      await loadMsalForProduction();
-      const [{ AUTH: auth }, { GRAPH: graph }, { APP_USERS: appUsers }] = await Promise.all([import("./auth.js"), import("./graph.js"), import("./authorization.js")]);
-      AUTH = auth; GRAPH = graph; APP_USERS = appUsers; window.AUTH = AUTH; window.GRAPH = GRAPH;
-      await AUTH.init();
-      if (!AUTH.account) { root.innerHTML = renderLogin(); return; }
-      if (!AUTH.isAuthenticated) { root.innerHTML = renderUnauthorized(AUTH.error || "Your account is not approved for Admin Hub."); return; }
-      const decision = await APP_USERS.authorize();
-      if (!decision.allowed) { root.innerHTML = renderUnauthorized("Your account is not authorized for Admin Hub.", APP_USERS.error ? "Permission verification failed. Please try again later." : APP_USERS.authorizationNote); return; }
-      state.userName = AUTH.displayName;
-    } else {
-      state.userName = "Demo Administrator";
-    }
+    await loadMsal();
+    const [{ AUTH: auth }, { GRAPH: graph }, { APP_USERS: appUsers }] = await Promise.all([import("./auth.js"), import("./graph.js"), import("./authorization.js")]);
+    AUTH = auth; GRAPH = graph; APP_USERS = appUsers; window.AUTH = AUTH; window.GRAPH = GRAPH;
+    await AUTH.init();
+    if (!AUTH.account) { root.innerHTML = renderLogin(); return; }
+    if (!AUTH.isAuthenticated) { root.innerHTML = renderUnauthorized(AUTH.error || "Your account is not approved for Admin Hub."); return; }
+    const decision = await APP_USERS.authorize();
+    if (!decision.allowed) { root.innerHTML = renderUnauthorized("Your account is not authorized for Admin Hub.", APP_USERS.error ? "Permission verification failed. Please try again later." : APP_USERS.authorizationNote); return; }
+    state.userName = AUTH.displayName;
     await loadData();
   } catch (error) {
-    console.error(error); root.innerHTML = renderError("Admin Hub could not load", "We could not load the workspace right now. Check your connection or open demo mode for a local review.");
+    console.error(error); root.innerHTML = renderError("Admin Hub could not load", "We could not load the workspace right now. Check your connection and try again.");
   }
 }
 
 document.addEventListener("click", event => {
   const followUpAction = event.target.closest("[data-follow-up-action]");
-  if (followUpAction && state.demo) {
+  if (followUpAction && state.followUpEnabled) {
     const activeVisit = state.visits.find(item => item.id === state.activeVisitId);
     if (!activeVisit) return;
     const note = root.querySelector("#followUpNote")?.value ?? "";
     const action = followUpAction.dataset.followUpAction;
-    const actor = action === "start-review" ? "Morgan Reed — Behavior Specialist" : "Jordan Ellis — Administrator";
+    const actor = state.userName;
     try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); paint(); } catch (error) { console.error(error); }
     return;
   }

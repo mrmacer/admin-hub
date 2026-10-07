@@ -1,4 +1,4 @@
-import { APP_ENV, CONFIG } from "./config.js";
+import { CONFIG } from "./config.js";
 import { AUTH } from "./auth.js";
 
 function bool(value) {
@@ -25,8 +25,6 @@ export function decideAuthorization({ schema = {}, row = null, legacyAllowed = f
 export const APP_USERS = {
   row: null, schema: null, error: null, decision: null,
   async authorize() {
-    if (APP_ENV === "demo") { this.decision = { allowed: true, reason: "demo-environment" }; return this.decision; }
-    if (APP_ENV !== "production") { this.decision = { allowed: false, reason: "invalid-environment" }; return this.decision; }
     try {
       const [rows, schema] = await Promise.all([window.GRAPH.getAppUsers(), window.GRAPH.getAppUsersSchema()]);
       this.schema = schema;
@@ -44,7 +42,6 @@ export const APP_USERS = {
   },
   get isAllowed() { return Boolean(this.decision?.allowed); },
   get authorizationNote() {
-    if (APP_ENV === "demo") return "Demo access is enabled for this synthetic-only build.";
     if (this.decision?.reason?.startsWith("temporary")) return "Temporary migration fallback: add an explicit Admin Hub flag before broader use.";
     return this.decision?.field ? `Authorized by ${this.decision.field}.` : "Authorization is explicit to Admin Hub.";
   },
