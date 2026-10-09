@@ -1,4 +1,5 @@
 import { currentRoute } from "./router.js";
+import { esc } from "./components/html.js";
 import { renderActivity, renderHome, renderOverview, renderStudentDetail, renderStudents } from "./modules/pace/pace-views.js";
 
 const nav = [{ page: "home", label: "Home", icon: "⌂" }, { page: "pace", label: "PACE Overview", icon: "P" }, { page: "students", label: "Students", icon: "S" }, { page: "activity", label: "Activity Log", icon: "≡" }];
@@ -20,5 +21,5 @@ export function renderApp(state) {
 
 export function renderLoading(message = "Loading Admin Hub…") { return `<div class="center-state"><div class="spinner"></div><h1>${message}</h1><p>Connecting to the administrative workspace.</p></div>`; }
 export function renderError(title, message) { return `<div class="center-state error-state"><div class="error-mark">!</div><h1>${title}</h1><p>${message}</p></div>`; }
-export function renderLogin() { return `<div class="center-state login-state"><div class="brand-mark large">IU</div><div class="eyebrow">IU29 ADMINISTRATIVE SYSTEMS</div><h1>Admin Hub</h1><p>Sign in with your IU29 Microsoft account to view administrative operational data.</p><button id="signIn" class="button primary">Sign in with Microsoft</button><p class="login-note">This is the controlled production environment.</p></div>`; }
+export function renderLogin(message = "") { return `<div class="center-state login-state"><div class="brand-mark large">IU</div><div class="eyebrow">IU29 ADMINISTRATIVE SYSTEMS</div><h1>Admin Hub</h1><p>Sign in with your IU29 Microsoft account to view administrative operational data.</p>${message ? `<p class="auth-note">${esc(message)}</p>` : ""}<button id="signIn" class="button primary">Sign in with Microsoft</button><p class="login-note">This is the controlled production environment.</p></div>`; }
 export function renderUnauthorized(message, note = "") { return `<div class="center-state error-state"><div class="lock-mark">⌑</div><h1>Admin Hub access required</h1><p>${message}</p>${note ? `<p class="auth-note">${note}</p>` : ""}<button id="signOut" class="button secondary">Sign out</button></div>`; }

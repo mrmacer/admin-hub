@@ -37,7 +37,7 @@ async function boot() {
     const [{ AUTH: auth }, { GRAPH: graph }, { APP_USERS: appUsers }] = await Promise.all([import("./auth.js"), import("./graph.js"), import("./authorization.js")]);
     AUTH = auth; GRAPH = graph; APP_USERS = appUsers; window.AUTH = AUTH; window.GRAPH = GRAPH;
     await AUTH.init();
-    if (!AUTH.account) { root.innerHTML = renderLogin(); return; }
+    if (!AUTH.account) { root.innerHTML = renderLogin(AUTH.signInError); return; }
     if (!AUTH.isAuthenticated) { root.innerHTML = renderUnauthorized(AUTH.error || "Your account is not approved for Admin Hub."); return; }
     const decision = await APP_USERS.authorize();
     if (!decision.allowed) { root.innerHTML = renderUnauthorized("Your account is not authorized for Admin Hub.", APP_USERS.error ? "Permission verification failed. Please try again later." : APP_USERS.authorizationNote); return; }

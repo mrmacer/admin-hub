@@ -1,5 +1,5 @@
 import { CONFIG } from "./config.js";
-import { AUTH } from "./auth.js";
+import { AUTH, findRowByEmail } from "./auth.js";
 
 function bool(value) {
   if (typeof value === "boolean") return value;
@@ -24,9 +24,7 @@ export const APP_USERS = {
   row: null, error: null, decision: null,
   async authorize() {
     try {
-      const rows = await window.GRAPH.getAppUsers();
-      const email = AUTH.email.toLowerCase().trim();
-      this.row = rows.find(row => String(row.Email ?? "").trim().toLowerCase() === email) ?? null;
+      this.row = await findRowByEmail(CONFIG.lists.appUsers, AUTH.emails);
       const legacyAllowed = Boolean(AUTH.staff?.active) && AUTH.staff?.role.toLowerCase() === "administrator";
       this.decision = decideAuthorization({ row: this.row, legacyAllowed });
       return this.decision;
