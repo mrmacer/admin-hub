@@ -17,8 +17,24 @@ export function mapGraphItemsToDisplay(items, schema) {
   return (items ?? []).map(item => { const row = { id: item.id, Created: item.createdDateTime ?? "" }; for (const [key, value] of Object.entries(item.fields ?? item)) if (key !== "id") row[inverse[key] ?? key] = value; return row; });
 }
 
+// Builds "(fields/A eq 'x' or fields/B eq 'x' ...)" from display column names.
+// Returns null when none of the columns exist, so the caller skips the filter.
+export function buildEqualsFilter(schema, fields, values) {
+  const columns = [...new Set(fields.map(field => schema?.[field]).filter(Boolean))];
+  const literals = [...new Set(values.map(value => String(value ?? "").trim()).filter(Boolean))].map(value => `'${value.replaceAll("'", "''")}'`);
+  if (!columns.length || !literals.length) return null;
+  return `(${columns.flatMap(column => literals.map(literal => `fields/${column} eq ${literal}`)).join(" or ")})`;
+}
+
+// Shares one in-flight request between concurrent callers and keeps the
+// result; a failed request is forgotten so the next call retries.
+function cached(cache, key, load) {
+  if (!cache.has(key)) cache.set(key, load().catch(error => { cache.delete(key); throw error; }));
+  return cache.get(key);
+}
+
 export const GRAPH = {
-  base: "https://graph.microsoft.com/v1.0", siteId: null, listIds: new Map(), schemas: new Map(),
+  base: "https://graph.microsoft.com/v1.0", siteIds: new Map(), lists: new Map(), schemas: new Map(),
   async get(path, headers = {}) {
     const token = await this.token();
     const response = await fetch(`${this.base}/${path}`, { headers: { Authorization: `Bearer ${token}`, ...headers } });
@@ -26,36 +42,37 @@ export const GRAPH = {
     return response.json();
   },
   async token() { return window.AUTH_TOKEN ?? (await window.AUTH.acquireGraphToken?.()); },
-  async getSiteId() { if (!this.siteId) this.siteId = (await this.get(`sites/${CONFIG.sitePath}`)).id; return this.siteId; },
+  getSiteId() { return cached(this.siteIds, CONFIG.sitePath, async () => (await this.get(`sites/${CONFIG.sitePath}`)).id); },
+  // One request lists every list on the site; each list's id is found from it.
+  getLists() { return cached(this.lists, "*", async () => (await this.get(`sites/${await this.getSiteId()}/lists?$select=id,name,displayName`)).value ?? []); },
   async getListId(listName) {
-    if (this.listIds.has(listName)) return this.listIds.get(listName);
-    const siteId = await this.getSiteId();
-    const data = await this.get(`sites/${siteId}/lists?$select=id,name,displayName`);
-    const match = (data.value ?? []).find(list => [list.name, list.displayName].some(value => String(value ?? "").toLowerCase().trim() === listName.toLowerCase()));
+    const match = (await this.getLists()).find(list => [list.name, list.displayName].some(value => String(value ?? "").toLowerCase().trim() === listName.toLowerCase()));
     if (!match) throw new Error(`The SharePoint list ${listName} was not found.`);
-    this.listIds.set(listName, match.id); return match.id;
+    return match.id;
   },
-  async getSchema(listName) {
-    if (this.schemas.has(listName)) return this.schemas.get(listName);
-    const siteId = await this.getSiteId(); const listId = await this.getListId(listName);
-    const data = await this.get(`sites/${siteId}/lists/${listId}/columns?$select=name,displayName`);
-    const schema = {}; for (const column of data.value ?? []) if (column.displayName && column.name) schema[column.displayName] = column.name;
-    this.schemas.set(listName, schema); return schema;
+  getSchema(listName) {
+    return cached(this.schemas, listName, async () => {
+      const siteId = await this.getSiteId(); const listId = await this.getListId(listName);
+      const data = await this.get(`sites/${siteId}/lists/${listId}/columns?$select=name,displayName`);
+      const schema = {}; for (const column of data.value ?? []) if (column.displayName && column.name) schema[column.displayName] = column.name;
+      return schema;
+    });
   },
   async getListItems(listName, options = {}) {
     const siteId = await this.getSiteId(); const listId = await this.getListId(listName); const schema = await this.getSchema(listName);
     let path = `sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200`; let headers = {};
-    if (options.from && options.to && schema.Date) {
-      const filter = `fields/${schema.Date} ge '${toGraphUtcBoundary(options.from)}' and fields/${schema.Date} lt '${toGraphUtcBoundary(options.to, true)}'`;
-      path += `&$filter=${encodeURIComponent(filter)}`;
-      // Date is not an indexed column; SharePoint rejects the filter without this header.
+    const filters = [];
+    if (options.from && options.to && schema.Date) filters.push(`fields/${schema.Date} ge '${toGraphUtcBoundary(options.from)}' and fields/${schema.Date} lt '${toGraphUtcBoundary(options.to, true)}'`);
+    if (options.equals) { const clause = buildEqualsFilter(schema, options.equals.fields, options.equals.values); if (clause) filters.push(clause); }
+    if (filters.length) {
+      path += `&$filter=${encodeURIComponent(filters.join(" and "))}`;
+      // These columns are not indexed; SharePoint rejects the filter without this header.
       headers = { Prefer: "HonorNonIndexedQueriesWarningMayFailRandomly" };
     }
     const items = await fetchAllGraphPages(pathValue => this.get(pathValue, headers), path, this.base);
     return mapGraphItemsToDisplay(items, schema);
   },
   async getPaceVisits(range) { return this.getListItems(CONFIG.lists.paceVisits, range); },
-  async getAppUsers() { return this.getListItems(CONFIG.lists.appUsers); },
   createListItem: writableReadOnly,
   updateListItem: writableReadOnly,
   deleteListItem: writableReadOnly
