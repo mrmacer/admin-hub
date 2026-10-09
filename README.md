@@ -23,25 +23,22 @@ Intentionally excluded: MAC intelligence, Daily Pulse, Living IEP logic,
 Melissa-specific workflows, setup tools, reports, exports, and any PACE write,
 edit, or delete operation.
 
-## Authorization design
+## Authorization
 
-`IEP_App_Users` is the intended authorization source. V1 looks for these future
-display columns in order:
+Admin Hub uses the same access model as PACE, MAC-Walkthrough and Daily Pulse.
+A user must first have an active row in `IEP_Users2`. Then:
 
-- `Admin Hub`
-- `PACE Dashboard`
+- **Has an `IEP_App_Users` row (matched by Email):** the `Admin Panel` column
+  decides. Yes allows access; No or blank denies it.
+- **No `IEP_App_Users` row:** falls back to the legacy rule, so an active
+  `IEP_Users2` user with Role = Administrator is allowed.
+- **The lookup fails:** access is denied.
 
-Recommended future access columns to add manually, after review:
-
-| Column | Type | Purpose |
-| --- | --- | --- |
-| `Admin Hub` | Yes/No | Access to the shared administrative shell |
-| `PACE Dashboard` | Yes/No | Access to the PACE module |
-The app does not create or modify SharePoint columns. Until an explicit Admin
-Hub or PACE Dashboard column exists, a temporary migration fallback permits an
-active `IEP_Users2` administrator. `Admin Panel` is never read as a grant and
-is not a migration fallback. Set `CONFIG.authorization.enforceExplicitFlag`
-to a stricter policy during the authorization cutover if desired.
+`Admin Panel` is shared with MAC-Walkthrough: Yes grants both the MAC admin
+panel and Admin Hub. The column is set in
+`CONFIG.authorization.permissionField`. Once every user has an `IEP_App_Users`
+row, set `CONFIG.authorization.enforceAppUsers` to `true` so a missing row
+means no access.
 
 For a future production follow-up workflow, consider a separate permission
 such as `PACE Follow-Up` with Manage access. Do not modify `IEP_App_Users` as
