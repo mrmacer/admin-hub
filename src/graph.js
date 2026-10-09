@@ -56,7 +56,6 @@ export const GRAPH = {
   },
   async getPaceVisits(range) { return this.getListItems(CONFIG.lists.paceVisits, range); },
   async getAppUsers() { return this.getListItems(CONFIG.lists.appUsers); },
-  async getAppUsersSchema() { return this.getSchema(CONFIG.lists.appUsers); },
   createListItem: writableReadOnly,
   updateListItem: writableReadOnly,
   deleteListItem: writableReadOnly

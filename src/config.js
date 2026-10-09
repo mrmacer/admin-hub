@@ -12,12 +12,12 @@ export const CONFIG = {
   // until then follow-up state would only live in browser memory.
   followUp: { enabled: false },
   authorization: {
-    enforceExplicitFlag: false,
-    adminHubFields: ["Admin Hub", "Admin Hub Access", "AdminHub", "adminHub"],
-    paceDashboardFields: ["PACE Dashboard", "PACE Dashboard Access", "Pace Dashboard"],
-    // This is intentionally not an authorization field. Admin Panel is a MAC
-    // permission and must never silently grant Admin Hub access.
-    excludedLegacyFields: ["Admin Panel"]
+    // IEP_App_Users column that grants Admin Hub access. Shared with the
+    // MAC-Walkthrough Admin Panel, so one flag grants both.
+    permissionField: "Admin Panel",
+    // false = users with no IEP_App_Users row fall back to the active
+    // IEP_Users2 Administrator role. Turn on once every user has a row.
+    enforceAppUsers: false
   },
   paceFieldAliases: {
     student: ["Student", "Student Name", "StudentName", "studentName"],

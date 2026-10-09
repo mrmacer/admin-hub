@@ -2,21 +2,30 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { decideAuthorization } from "../src/authorization.js";
 
-test("explicit Admin Hub permission allows an authorized user", () => {
-  assert.equal(decideAuthorization({ schema: { "Admin Hub": "AdminHub" }, row: { "Admin Hub": "Yes" }, legacyAllowed: false }).allowed, true);
+test("an IEP_App_Users row with Admin Panel = Yes allows access", () => {
+  const result = decideAuthorization({ row: { "Admin Panel": "Yes" }, legacyAllowed: false });
+  assert.equal(result.allowed, true);
+  assert.equal(result.reason, "app-users-permission");
 });
 
-test("explicit Admin Hub denial wins over a legacy role fallback", () => {
-  assert.equal(decideAuthorization({ schema: { "Admin Hub": "AdminHub" }, row: { "Admin Hub": "No" }, legacyAllowed: true }).allowed, false);
+test("an IEP_App_Users row with Admin Panel = No denies even an administrator", () => {
+  assert.equal(decideAuthorization({ row: { "Admin Panel": "No" }, legacyAllowed: true }).allowed, false);
+  assert.equal(decideAuthorization({ row: { "Admin Panel": false }, legacyAllowed: true }).allowed, false);
+  assert.equal(decideAuthorization({ row: { PACE: "Yes" }, legacyAllowed: true }).allowed, false);
 });
 
-test("Admin Panel permission does not imply Admin Hub access", () => {
-  const result = decideAuthorization({ schema: { "Admin Panel": "AdminPanel" }, row: { AdminPanel: "Yes" }, legacyAllowed: false });
+test("other app flags do not grant Admin Hub access", () => {
+  const result = decideAuthorization({ row: { PACE: true, Walkthrough: true, "Daily Pulse": true, "Admin Panel": false }, legacyAllowed: false });
   assert.equal(result.allowed, false);
-  assert.equal(result.reason, "temporary-role-fallback-denied");
 });
 
-test("missing future columns use only the temporary administrator fallback", () => {
-  assert.equal(decideAuthorization({ schema: { Email: "Email", PACE: "PACE" }, row: { PACE: "Yes" }, legacyAllowed: true }).allowed, true);
-  assert.equal(decideAuthorization({ schema: { Email: "Email", PACE: "PACE" }, row: { PACE: "Yes" }, legacyAllowed: false }).allowed, false);
+test("no row falls back to the active administrator rule", () => {
+  assert.equal(decideAuthorization({ row: null, legacyAllowed: true, enforce: false }).reason, "legacy-fallback");
+  assert.equal(decideAuthorization({ row: null, legacyAllowed: false, enforce: false }).allowed, false);
+});
+
+test("enforced mode denies users with no row", () => {
+  const result = decideAuthorization({ row: null, legacyAllowed: true, enforce: true });
+  assert.equal(result.allowed, false);
+  assert.equal(result.reason, "enforced-no-row");
 });
