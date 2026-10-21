@@ -12,7 +12,17 @@ const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
 const state = { followUpEnabled: CONFIG.followUp.enabled, range: dateRangeForPreset("today"), visits: [], followUps: {}, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null };
 
-function paint() { root.innerHTML = renderApp(state); }
+// Re-rendering replaces every element, including the search box being typed
+// in, so put the cursor back where it was afterwards.
+function paint() {
+  const active = document.activeElement;
+  const typing = active?.tagName === "INPUT" && ["search", "text"].includes(active.type);
+  const selector = !typing ? null : active.id ? `#${active.id}` : active.dataset.activityFilter ? `[data-activity-filter="${active.dataset.activityFilter}"]` : null;
+  const { selectionStart, selectionEnd } = active ?? {};
+  root.innerHTML = renderApp(state);
+  const next = selector && root.querySelector(selector);
+  if (next) { next.focus(); next.setSelectionRange(selectionStart, selectionEnd); }
+}
 
 async function loadMsal() {
   if (window.msal) return;
@@ -75,8 +85,10 @@ document.addEventListener("change", async event => {
   if (event.target.id === "datePreset" || event.target.id === "rangeFrom" || event.target.id === "rangeTo") {
     const control = event.target.closest(".date-control"); state.range = rangeFromControls(control, state.range); state.activeVisitId = null; try { await loadData(true); } catch { root.innerHTML = renderError("PACE data could not load", "The date range could not be loaded. Please try again."); } return;
   }
+  // Text boxes are handled on "input". Chrome also fires "change" when a redraw
+  // removes the box being typed in, and repainting then would drop the cursor.
   const filter = event.target.closest("[data-activity-filter]");
-  if (filter) { state.activityFilters[filter.dataset.activityFilter] = filter.value; paint(); }
+  if (filter && filter.tagName !== "INPUT") { state.activityFilters[filter.dataset.activityFilter] = filter.value; paint(); }
 });
 
 document.addEventListener("input", event => {
