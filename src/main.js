@@ -133,8 +133,9 @@ document.addEventListener("click", event => {
   if (rosterAction === "reload") { reloadRoster(); return; }
   if (rosterAction === "add-anyway") { addStudent(true); return; }
   if (rosterAction === "dismiss-duplicates") { state.roster.duplicates = null; paint(); return; }
+  // The backdrop wraps the dialog, so it closes only when the backdrop itself is clicked.
   const close = event.target.closest("[data-close-modal]");
-  if (close) { state.activeVisitId = null; paint(); return; }
+  if (close && (event.target === close || !close.classList.contains("modal-backdrop"))) { state.activeVisitId = null; paint(); return; }
   const visit = event.target.closest("[data-visit]");
   if (visit) { state.activeVisitId = visit.dataset.visit; paint(); return; }
   const student = event.target.closest("[data-student]");
