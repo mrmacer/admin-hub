@@ -3,7 +3,9 @@
 Admin Hub is an administrator- and behavior-specialist-facing PACE dashboard.
 The visible product is deliberately focused on the information gap around
 PACE visits and administrative follow-up; it is not an SIS, discipline system,
-IEP editor, or replacement for existing school systems.
+IEP editor, or replacement for existing school systems. Its one write feature
+is a Roster area where administrators add students and teachers to the IEP
+Skook roster (see [Roster](#roster)).
 
 ## Architecture audit
 
@@ -19,9 +21,15 @@ Safely reused from PACE Room Tracker and MAC-Walkthrough:
   Person value unwrapping, and null-safe SCM handling.
 - Graph pagination with stable SharePoint item IDs.
 
+- MAC's student-roster add path: the `IEP_Students_2026_27` column rules,
+  canonical Teacher value, duplicate-name check, type-aware Yes/No values, and
+  read-back verification by item id. Teachers are added the way MAC's Setup →
+  Users does, fixed to Role = Teacher.
+
 Intentionally excluded: MAC intelligence, Daily Pulse, Living IEP logic,
-Melissa-specific workflows, setup tools, reports, exports, and any PACE write,
-edit, or delete operation.
+Melissa-specific workflows, the rest of MAC Setup (the full Users list,
+Administrator accounts, editing or deactivating anyone, classrooms, data
+tools), reports, exports, and any PACE write, edit, or delete operation.
 
 ## Authorization
 
@@ -51,7 +59,7 @@ index.html / styles.css / server.js
 src/
   config.js              Entra, SharePoint, module, and field configuration
   auth.js                Existing MSAL identity pattern
-  graph.js               Read-only Graph client with paging and schema mapping
+  graph.js               Graph client: paging, schema mapping, roster-only creates
   authorization.js       IEP_App_Users decision policy
   date-utils.js          Local calendar and Graph boundary handling
   router.js / app-shell.js / main.js
@@ -61,6 +69,10 @@ src/
     pace-analytics.js    Pure normalization and aggregation functions
     pace-follow-up.js    Separate review-state model
     pace-views.js        Overview, students, detail, and activity UI
+  modules/roster/
+    roster-model.js      Pure student/teacher rules shared with MAC-Walkthrough
+    roster-data.js       Roster load and the verified add path
+    roster-views.js      Student Roster and Teachers pages
 test/                    Node built-in test suite
 ```
 
@@ -75,10 +87,46 @@ and derives same-day minutes from Time In / Time Out when it is absent.
 ## Security notes
 
 This remains a client-side delegated Graph architecture. UI authorization is
-not row-level data security. The app does not broaden SharePoint access, does
-not add secrets, and contains no browser-side application secret. Admin Hub is
-read-only against `IEP_Pace_Visits`. The follow-up workflow is switched off
+not row-level data security. The app does not add secrets and contains no
+browser-side application secret. Admin Hub is read-only against
+`IEP_Pace_Visits`. The follow-up workflow is switched off
 (`CONFIG.followUp.enabled`) until it has a SharePoint list to save to.
+
+To add to the roster, Admin Hub requests `Sites.ReadWrite.All`, the same scope
+MAC-Walkthrough already uses on this shared app registration, so it gives
+signed-in users no SharePoint access they did not already have through MAC.
+Inside the app, `GRAPH.createListItem` refuses every list except
+`CONFIG.writableLists` (`IEP_Users2`, `IEP_Students_2026_27`), and Admin Hub
+has no update or delete operation at all.
+
+## Roster
+
+Two pages under **Roster** in the sidebar. Anyone allowed into Admin Hub can
+use them; adds are refused unless the Admin Hub authorization decision allowed
+the user.
+
+- **Student Roster** adds a row to `IEP_Students_2026_27`, the list
+  MAC-Walkthrough, PACE and Daily Pulse read. It collects first name, last
+  name, teacher, an optional classroom, and Active / PACE Enabled / Daily
+  Pulse Enabled (only Active starts on). The teacher dropdown lists active
+  `IEP_Users2` teachers and saves the exact Teacher value existing students
+  already use for that person (for example `Bossons, A`), or `Last, F` for a
+  teacher with no students yet.
+- **Teachers** adds a row to `IEP_Users2` with Role = Teacher and Active = Yes,
+  plus a generated user id in Title. An email that already has a row is never
+  added again. Adding a teacher does not grant Admin Hub access.
+
+Each add follows MAC's rules. Nothing is sent until the whole roster has
+loaded. A student whose name is already on the roster (inactive included)
+needs a second confirmation. Every value is checked against the column's real
+type, and a required column the form does not fill blocks the save. The new
+row is then read back by its item id and compared field by field. If
+SharePoint refuses, nothing was saved and trying again is safe. If the
+connection drops mid-save, the result is reported as uncertain and is never
+retried automatically.
+
+Editing, deactivating, or reassigning existing students and users stays in
+MAC-Walkthrough.
 
 ## PACE follow-up
 
@@ -122,6 +170,7 @@ date fields if production queue queries require them.
 Admin Hub is a static site with no build step. Every load signs in through
 Microsoft Entra, checks `IEP_Users2` and `IEP_App_Users`, and reads
 `IEP_Pace_Visits` from the `IEP_Skook` SharePoint site through Microsoft Graph.
+The Roster pages also read `IEP_Students_2026_27` and `IEP_Users2` when opened.
 
 Sign-in redirects back to `window.location.origin`, so every address the app is
 served from (the Vercel URL and `http://localhost:4173` for local work) must be

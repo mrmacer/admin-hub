@@ -12,8 +12,9 @@ test("Graph pagination follows every nextLink and preserves item ids", async () 
   assert.deepEqual(mapGraphItemsToDisplay(rows, { Name: "Title" }), [{ id: "10", Created: "", Name: "First" }, { id: "11", Created: "", Name: "Second" }]);
 });
 
-test("Admin Hub Graph client exposes read-only PACE operations", () => {
-  assert.throws(() => GRAPH.createListItem(), /read-only/);
+test("Admin Hub Graph client keeps PACE read-only and only adds to roster lists", async () => {
+  await assert.rejects(() => GRAPH.createListItem("IEP_Pace_Visits", { Title: "x" }), /read-only/);
+  await assert.rejects(() => GRAPH.createListItem("IEP_App_Users", { Title: "x" }), /read-only/);
   assert.throws(() => GRAPH.updateListItem(), /read-only/);
   assert.throws(() => GRAPH.deleteListItem(), /read-only/);
 });
@@ -26,7 +27,7 @@ test("email filters use internal column names and escape quotes", () => {
 
 test("concurrent site, list and schema lookups share one request, and failures retry", async () => {
   const paths = []; let failSite = true;
-  const graph = { ...GRAPH, siteIds: new Map(), lists: new Map(), schemas: new Map(), async get(path) {
+  const graph = { ...GRAPH, siteIds: new Map(), lists: new Map(), schemas: new Map(), columns: new Map(), async get(path) {
     paths.push(path);
     if (path.startsWith("sites/") && !path.includes("/lists")) { if (failSite) { failSite = false; throw new Error("503"); } return { id: "site" }; }
     if (path.endsWith("$select=id,name,displayName")) return { value: [{ id: "list", name: "IEP_Users2" }] };

@@ -1,12 +1,17 @@
 import { currentRoute } from "./router.js";
 import { esc } from "./components/html.js";
 import { renderActivity, renderHome, renderOverview, renderStudentDetail, renderStudents } from "./modules/pace/pace-views.js";
+import { renderRosterStudents, renderRosterTeachers } from "./modules/roster/roster-views.js";
+import { ROSTER } from "./modules/roster/roster-data.js";
 
-const nav = [{ page: "home", label: "Home", icon: "⌂" }, { page: "pace", label: "PACE Overview", icon: "P" }, { page: "students", label: "Students", icon: "S" }, { page: "activity", label: "Activity Log", icon: "≡" }];
+const nav = [
+  { label: "PACE workspace", items: [{ page: "home", label: "Home", icon: "⌂", href: "home" }, { page: "pace", label: "PACE Overview", icon: "P", href: "pace" }, { page: "students", label: "Students", icon: "S", href: "pace/students" }, { page: "activity", label: "Activity Log", icon: "≡", href: "pace/activity" }] },
+  { label: "Roster", items: [{ page: "roster-students", label: "Student Roster", icon: "+", href: "roster/students" }, { page: "roster-teachers", label: "Teachers", icon: "T", href: "roster/teachers" }] }
+];
 
 function shell(state, content) {
   const route = currentRoute();
-  return `<div class="app-frame"><aside class="sidebar"><div class="brand"><div class="brand-mark">IU</div><div><strong>Admin Hub</strong><span>PACE dashboard</span></div></div><nav aria-label="Main navigation"><div class="nav-label">PACE workspace</div>${nav.map(item => `<a class="nav-item ${route.page === item.page || (item.page === "pace" && ["student-detail"].includes(route.page)) ? "active" : ""}" href="#/${item.page === "home" ? "home" : item.page === "pace" ? "pace" : `pace/${item.page}`}" data-nav>${`<span class="nav-icon">${item.icon}</span>${item.label}`}</a>`).join("")}</nav><div class="sidebar-footer"><span class="status-dot"></span><span>Connected</span></div></aside><main class="main-content"><header class="topbar"><div class="mobile-brand"><div class="brand-mark">IU</div><strong>Admin Hub</strong></div><div class="topbar-spacer"></div><div class="user-menu"><span class="user-avatar">${(state.userName || "A").slice(0, 1).toUpperCase()}</span><span>${state.userName || "Administrator"}</span><button id="signOut" class="text-button">Sign out</button></div></header><div class="content-wrap">${content}</div></main></div>`;
+  return `<div class="app-frame"><aside class="sidebar"><div class="brand"><div class="brand-mark">IU</div><div><strong>Admin Hub</strong><span>PACE dashboard</span></div></div><nav aria-label="Main navigation">${nav.map(group => `<div class="nav-label">${group.label}</div>${group.items.map(item => `<a class="nav-item ${route.page === item.page || (item.page === "pace" && ["student-detail"].includes(route.page)) ? "active" : ""}" href="#/${item.href}" data-nav>${`<span class="nav-icon">${item.icon}</span>${item.label}`}</a>`).join("")}`).join("")}</nav><div class="sidebar-footer"><span class="status-dot"></span><span>Connected</span></div></aside><main class="main-content"><header class="topbar"><div class="mobile-brand"><div class="brand-mark">IU</div><strong>Admin Hub</strong></div><div class="topbar-spacer"></div><div class="user-menu"><span class="user-avatar">${(state.userName || "A").slice(0, 1).toUpperCase()}</span><span>${state.userName || "Administrator"}</span><button id="signOut" class="text-button">Sign out</button></div></header><div class="content-wrap">${content}</div></main></div>`;
 }
 
 export function renderApp(state) {
@@ -16,6 +21,8 @@ export function renderApp(state) {
   if (route.page === "students") content = renderStudents(state.visits, state.range, state, activeVisit);
   if (route.page === "student-detail") content = renderStudentDetail(state.visits, state.range, route.student, state.followUps, activeVisit, state.followUpEnabled);
   if (route.page === "activity") content = renderActivity(state.visits, state.range, state, activeVisit);
+  if (route.page === "roster-students") content = renderRosterStudents(ROSTER, state.roster);
+  if (route.page === "roster-teachers") content = renderRosterTeachers(ROSTER, state.roster);
   return shell(state, content);
 }
 
