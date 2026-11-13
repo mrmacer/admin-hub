@@ -2,6 +2,7 @@ import { APP_ENV, IS_DEMO } from "./environment.js";
 
 export { APP_ENV };
 export const APP_MODE = APP_ENV;
+export const DEFAULT_PACE_RANGE_PRESET = "30";
 
 export const CONFIG = {
   appName: "Admin Hub",

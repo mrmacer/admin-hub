@@ -1,15 +1,15 @@
 import { APP_ENV } from "./environment.js";
-import { dateRangeForPreset } from "./date-utils.js";
+import { DEFAULT_PACE_RANGE_PRESET } from "./config.js";
+import { dateRangeForPreset, localDateString } from "./date-utils.js";
 import { PACE_DATA } from "./modules/pace/pace-data.js";
 import { renderApp, renderError, renderLoading, renderLogin, renderUnauthorized } from "./app-shell.js";
 import { currentRoute, go } from "./router.js";
 import { rangeFromControls } from "./components/date-range.js";
 import { applyFollowUpAction, seedFollowUps } from "./modules/pace/pace-follow-up.js";
-import { localDateString } from "./date-utils.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
-const state = { demo: APP_ENV === "demo", range: dateRangeForPreset("today"), visits: [], followUps: {}, followUpsSeeded: false, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null };
+const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null };
 
 function paint() { root.innerHTML = renderApp(state); }
 
@@ -74,6 +74,13 @@ document.addEventListener("click", event => {
   if (sort) { state.studentsSort = sort.dataset.sort; paint(); return; }
   if (event.target.closest("#signIn")) { AUTH?.login(); return; }
   if (event.target.closest("#signOut")) { AUTH?.logout(); return; }
+});
+
+document.addEventListener("keydown", event => {
+  const viewport = event.target?.closest?.(".trend-chart-viewport");
+  if (!viewport || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+  viewport.scrollLeft += event.key === "ArrowRight" ? 120 : -120;
+  event.preventDefault();
 });
 
 document.addEventListener("change", async event => {

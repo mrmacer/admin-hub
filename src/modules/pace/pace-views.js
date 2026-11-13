@@ -16,7 +16,8 @@ function barList(title, rows, empty = "No data in this range.") {
 function trendChart(rows) {
   if (!rows.length) return emptyState("No visits in this range", "Daily activity will appear here when PACE visits are available.");
   const max = Math.max(...rows.map(row => row.count), 1);
-  return `<div class="trend-chart" role="img" aria-label="Visits by date">${rows.map(row => `<div class="trend-column"><div class="trend-count">${row.count}</div><div class="trend-bar" style="height:${Math.max(8, row.count / max * 110)}px"></div><div class="trend-label">${esc(formatDate(row.label, { month: "short", day: "numeric" }))}</div></div>`).join("")}</div>`;
+  const minWidth = Math.max(720, rows.length * 44);
+  return `<div class="trend-chart-viewport" role="region" aria-label="Visits over time; horizontally scrollable" tabindex="0"><div class="trend-chart" role="img" aria-label="Visits by date" style="--trend-min-width:${minWidth}px">${rows.map(row => `<div class="trend-column"><div class="trend-count">${row.count}</div><div class="trend-bar" style="height:${Math.max(8, row.count / max * 110)}px"></div><div class="trend-label">${esc(formatDate(row.label, { month: "short", day: "numeric" }))}</div></div>`).join("")}</div></div>`;
 }
 
 function followUpBadge(followUp, showEmpty = false) {
