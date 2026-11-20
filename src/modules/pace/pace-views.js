@@ -1,4 +1,4 @@
-import { formatDate, formatDateRange } from "../../date-utils.js";
+import { dateRangeForPreset, formatDate, formatDateRange } from "../../date-utils.js";
 import { aggregateStudents, calculateAverageDuration, calculateTotalDuration, filterVisits, groupVisitsByDate, groupVisitsByIntervention, groupVisitsByReason, groupVisitsByRoom, summarize, sortNewest } from "./pace-analytics.js";
 import { dateRangeControl } from "../../components/date-range.js";
 import { emptyState, esc, formatMinutes, metricCard, pill } from "../../components/html.js";
@@ -61,16 +61,21 @@ function renderFollowUpQueue(visits, followUps, demo) {
   return `<section class="panel follow-up-queue"><div class="panel-heading"><div><div class="eyebrow">Separate workflow</div><h2>Follow-Up</h2><p>Small queue for visits that someone has chosen to review. Most visits have no follow-up.</p></div><span class="panel-meta">${entries.length} seeded examples</span></div><div class="follow-up-queue-grid">${followUpQueueGroup("Needs Review", needs, "Nothing waiting for attention.")}${followUpQueueGroup("In Review", reviewing, "No active reviews.")}${followUpQueueGroup("Recently Completed", complete, "No completed follow-ups yet.")}</div></section>`;
 }
 
-export function renderHome() {
-  return `<section class="home-page"><div class="home-hero"><div class="eyebrow">IU29 / PACE</div><h1>PACE Admin Dashboard</h1><p>Understand what is happening in PACE, who is using it, and which visits may need administrative follow-up.</p></div><div class="section-heading"><div><h2>PACE workspace</h2><p>Read-only visit history with a separate, demo-only review layer.</p></div></div><a class="module-card active pace-focus-card" href="#/pace"><div class="module-mark pace-mark">P</div><div><div class="module-title">PACE</div><p>Review visits, usage patterns, duration, interventions, activity and follow-up status.</p><span class="module-link">Open PACE dashboard <span>→</span></span></div></a><div class="home-note"><span class="note-icon">i</span><div><strong>Focused on the PACE information gap</strong><p>Admin Hub is not an SIS, discipline system or IEP editor. Historical PACE records stay read-only; follow-up is tracked separately for this synthetic demo.</p></div></div></section>`;
+export function renderHome(visits = [], range = dateRangeForPreset("30"), followUps = {}, activeVisit = null, demo = true) {
+  return renderOverview(visits, range, followUps, activeVisit, demo, { home: true, title: "Admin Dashboard", subtitle: "PACE Operations & Insights", section: "Home" });
 }
 
-export function renderOverview(visits, range, followUps, activeVisit, demo = true) {
+export function renderOverview(visits, range, followUps, activeVisit, demo = true, options = {}) {
   const summary = summarize(visits, range); const completed = summary.records.filter(row => row.isCompleted);
   const trend = groupVisitsByDate(completed).sort((a, b) => a.label.localeCompare(b.label));
   const followUpRows = filterVisits(visits, range);
   const counts = followUpCounts(followUpRows, followUps);
-  return `${header("PACE Overview", "A clear view of visits, supports and activity patterns.", range)}<div class="kpi-grid">${metricCard("PACE visits", summary.visits, formatDateRange(range))}${metricCard("Unique students seen", summary.uniqueStudents, "Students with a completed visit")}${metricCard("Average visit duration", formatMinutes(summary.averageDuration), "Completed visits with duration")}${metricCard("SCM events", summary.scmEvents === null ? "—" : summary.scmEvents, summary.scmEvents === null ? "Not recorded in this range" : "SCM marked Yes")}${metricCard("Needs Review", counts.needsReview, "Waiting for administrative attention")}${metricCard("In Review", counts.inReview, "Follow-up currently underway")}${range.preset === "today" ? metricCard("Currently in PACE", summary.currentlyInPace, "Open visits dated today") : ""}</div>${renderFollowUpQueue(followUpRows, followUps, demo)}<div class="overview-grid"><section class="panel trend-panel"><div class="panel-heading"><div><h2>Visits over time</h2><p>How much PACE activity occurred on each day?</p></div><span class="panel-meta">${summary.visits} completed</span></div>${trendChart(trend)}</section>${barList("Reasons for visits", groupVisitsByReason(completed))}${barList("Interventions / supports", groupVisitsByIntervention(completed))}${barList("Visits by room", groupVisitsByRoom(completed))}</div>${activeVisit ? detailModal(activeVisit, followUps, demo) : ""}`;
+  const title = options.title ?? "PACE Overview";
+  const subtitle = options.subtitle ?? "A clear view of visits, supports and activity patterns.";
+  const section = options.section ?? "Overview";
+  const baseMetrics = `${metricCard("PACE visits", summary.visits, formatDateRange(range))}${metricCard("Unique students seen", summary.uniqueStudents, "Students with a completed visit")}${metricCard("Average visit duration", formatMinutes(summary.averageDuration), "Completed visits with duration")}${metricCard("SCM events", summary.scmEvents === null ? "—" : summary.scmEvents, summary.scmEvents === null ? "Not recorded in this range" : "SCM marked Yes")}`;
+  const operationalMetrics = options.home ? "" : `${metricCard("Needs Review", counts.needsReview, "Waiting for administrative attention")}${metricCard("In Review", counts.inReview, "Follow-up currently underway")}${range.preset === "today" ? metricCard("Currently in PACE", summary.currentlyInPace, "Open visits dated today") : ""}`;
+  return `${header(title, subtitle, range, section)}<div class="kpi-grid">${baseMetrics}${operationalMetrics}</div>${renderFollowUpQueue(followUpRows, followUps, demo)}<div class="overview-grid"><section class="panel trend-panel"><div class="panel-heading"><div><h2>Visits over time</h2><p>How much PACE activity occurred on each day?</p></div><span class="panel-meta">${summary.visits} completed</span></div>${trendChart(trend)}</section>${barList("Reasons for visits", groupVisitsByReason(completed))}${barList("Interventions / supports", groupVisitsByIntervention(completed))}${barList("Visits by room", groupVisitsByRoom(completed))}</div>${activeVisit ? detailModal(activeVisit, followUps, demo) : ""}`;
 }
 
 export function renderStudents(visits, range, state, activeVisit) {

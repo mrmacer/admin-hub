@@ -13,7 +13,7 @@ const range = dateRangeForPreset("90", "2026-10-03");
 
 test("PACE is the only visible product focus", () => {
   const home = renderHome();
-  assert.match(home, /PACE Admin Dashboard/);
+  assert.match(home, /Admin Dashboard/);
   assert.doesNotMatch(home, /Discipline|Student Support|Coming Soon/);
   const overview = renderOverview(visits, range, followUps, null, true);
   assert.match(overview, /Follow-Up/);
