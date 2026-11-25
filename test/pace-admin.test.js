@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { makeDemoVisits } from "../src/demo-data.js";
 import { normalizeVisit } from "../src/modules/pace/pace-analytics.js";
-import { ADMIN_MUTATION_ACTIONS, REVIEW_STATUS, activeVisits, adminHistoryFor, applyDemoEdit, markDemoViewed, matchesReviewStatus, recordDemoEdit, reviewCounts, restoreDemoVisit, saveDemoReview, seedAdminReviews, voidDemoVisit } from "../src/modules/pace/pace-admin.js";
+import { ADMIN_MUTATION_ACTIONS, REVIEW_STATUS, activeVisits, addDemoAdminNote, adminHistoryFor, adminNotesFor, applyDemoEdit, markDemoViewed, matchesReviewStatus, recordDemoEdit, reviewCounts, restoreDemoVisit, saveDemoReview, seedAdminReviews, voidDemoVisit } from "../src/modules/pace/pace-admin.js";
 import { PRODUCTION_ADMIN_WRITES_ENABLED } from "../src/config.js";
 
 const visits = makeDemoVisits("2026-10-03").map(normalizeVisit);
@@ -30,23 +30,25 @@ test("unauthorized edits, missing reasons, invalid times and stale edits are rej
   assert.throws(() => applyDemoEdit(changed.visits, visit.id, { ...changed.visit, room: "PACE Room Y" }, { ...context(), expectedVersion: 1 }), /changed while it was open/);
 });
 
-test("review notes are independent from original PACE notes and record actor/time", () => {
+test("administrative notes are independent, chronological and append-only", () => {
   const initial = seedAdminReviews(visits);
   const visit = visits.find(row => !initial[row.id]);
-  const next = saveDemoReview(initial, visit.id, { status: REVIEW_STATUS.REVIEWED, adminNotes: "Independent administrative note.", reason: "Synthetic review" }, context("Synthetic review"));
-  assert.equal(next[visit.id].adminNotes, "Independent administrative note.");
-  assert.equal(next[visit.id].reviewedBy, "Jordan Ellis — Administrator");
-  assert.equal(next[visit.id].reviewedAt, "2026-10-03T12:00:00.000Z");
-  assert.notEqual(next[visit.id].adminNotes, visit.notes);
-  assert.equal(adminHistoryFor(next, visit.id).at(-1).action, ADMIN_MUTATION_ACTIONS.REVIEW);
+  const reviewed = saveDemoReview(initial, visit.id, { status: REVIEW_STATUS.REVIEWED, reason: "Synthetic review" }, context("Synthetic review"));
+  const withFirstNote = addDemoAdminNote(reviewed, visit.id, "Independent administrative note.", context("Add first note"));
+  const withSecondNote = addDemoAdminNote(withFirstNote, visit.id, "A second administrator note.", { ...context("Add second note"), actor: "Casey Morgan — Administrator", at: "2026-10-03T12:05:00.000Z" });
+  assert.equal(adminNotesFor(withSecondNote, visit.id).length, 2);
+  assert.equal(adminNotesFor(withSecondNote, visit.id)[0].text, "Independent administrative note.");
+  assert.equal(adminNotesFor(withSecondNote, visit.id)[1].actor, "Casey Morgan — Administrator");
+  assert.notEqual(adminNotesFor(withSecondNote, visit.id)[0].text, visit.notes);
+  assert.equal(adminHistoryFor(withSecondNote, visit.id).at(-1).action, ADMIN_MUTATION_ACTIONS.ADD_NOTE);
 });
 
 test("mark as viewed is a simple explicit action that preserves separate review notes", () => {
   const initial = seedAdminReviews(visits); const visit = visits.find(row => !initial[row.id]);
-  const withNote = saveDemoReview(initial, visit.id, { status: REVIEW_STATUS.NEEDS_FOLLOW_UP, adminNotes: "Keep this separate.", reason: "Synthetic follow-up" }, context("Synthetic follow-up"));
+  const withNote = addDemoAdminNote(initial, visit.id, "Keep this separate.", context("Add note"));
   const viewed = markDemoViewed(withNote, visit.id, context("Marked as viewed"));
   assert.equal(viewed[visit.id].status, REVIEW_STATUS.REVIEWED);
-  assert.equal(viewed[visit.id].adminNotes, "Keep this separate.");
+  assert.equal(adminNotesFor(viewed, visit.id)[0].text, "Keep this separate.");
   assert.equal(adminHistoryFor(viewed, visit.id).at(-1).action, ADMIN_MUTATION_ACTIONS.MARK_VIEWED);
 });
 

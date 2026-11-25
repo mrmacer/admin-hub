@@ -6,7 +6,7 @@ import { renderApp, renderError, renderLoading, renderLogin, renderUnauthorized 
 import { currentRoute, go } from "./router.js";
 import { rangeFromControls } from "./components/date-range.js";
 import { applyFollowUpAction, seedFollowUps } from "./modules/pace/pace-follow-up.js";
-import { ADMIN_MUTATION_ACTIONS, REVIEW_STATUS, applyDemoEdit, markDemoViewed, recordDemoEdit, restoreDemoVisit, saveDemoReview, seedAdminReviews, voidDemoVisit } from "./modules/pace/pace-admin.js";
+import { ADMIN_MUTATION_ACTIONS, REVIEW_STATUS, addDemoAdminNote, applyDemoEdit, markDemoViewed, recordDemoEdit, restoreDemoVisit, saveDemoReview, seedAdminReviews, voidDemoVisit } from "./modules/pace/pace-admin.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
@@ -37,7 +37,7 @@ function adminContext(reason) { return { authorized: state.demo || (APP_ENV === 
 
 function readEditDraft() {
   const value = id => root.querySelector(`#${id}`)?.value ?? "";
-  return { student: value("adminStudent"), teacherCameFrom: value("adminTeacher"), room: value("adminRoom"), specialists: value("adminSpecialists"), timeIn: value("adminTimeIn"), timeOut: value("adminTimeOut"), reasons: value("adminReasons"), interventions: value("adminInterventions"), scmUsed: root.querySelector("#adminScm")?.value ?? "", notes: value("adminNotesSource") };
+  return { student: value("adminStudent"), date: value("adminDate"), teacherCameFrom: value("adminTeacher"), room: value("adminRoom"), specialists: value("adminSpecialists"), timeIn: value("adminTimeIn"), timeOut: value("adminTimeOut"), reasons: value("adminReasons"), interventions: value("adminInterventions"), scmUsed: root.querySelector("#adminScm")?.value ?? "", notes: value("adminNotesSource"), returnStatus: value("adminReturnStatus") };
 }
 
 async function boot() {
@@ -78,10 +78,13 @@ document.addEventListener("click", event => {
       } else if (action === ADMIN_MUTATION_ACTIONS.REVIEW) {
         const status = root.querySelector("#adminReviewStatus")?.value ?? "";
         const reviewReason = root.querySelector("#adminReviewReason")?.value ?? "";
-        state.adminReviews = saveDemoReview(state.adminReviews, activeVisit.id, { status, adminNotes: root.querySelector("#adminReviewNotes")?.value ?? "", followUpStatus: root.querySelector("#adminFollowUpStatus")?.value ?? "open", followUpAssignedTo: root.querySelector("#adminFollowUpAssignedTo")?.value ?? "", followUpDueDate: root.querySelector("#adminFollowUpDueDate")?.value ?? "", reason: reviewReason }, adminContext(reviewReason));
+        state.adminReviews = saveDemoReview(state.adminReviews, activeVisit.id, { status, followUpStatus: root.querySelector("#adminFollowUpStatus")?.value ?? "open", followUpAssignedTo: root.querySelector("#adminFollowUpAssignedTo")?.value ?? "", followUpDueDate: root.querySelector("#adminFollowUpDueDate")?.value ?? "", reason: reviewReason }, { ...adminContext(reviewReason), sourceVersion: activeVisit.adminVersion ?? 1 });
         state.mutationError = "";
       } else if (action === ADMIN_MUTATION_ACTIONS.MARK_VIEWED) {
-        state.adminReviews = markDemoViewed(state.adminReviews, activeVisit.id, adminContext("Marked as viewed"));
+        state.adminReviews = markDemoViewed(state.adminReviews, activeVisit.id, { ...adminContext("Marked as viewed"), sourceVersion: activeVisit.adminVersion ?? 1 });
+        state.mutationError = "";
+      } else if (action === ADMIN_MUTATION_ACTIONS.ADD_NOTE) {
+        state.adminReviews = addDemoAdminNote(state.adminReviews, activeVisit.id, root.querySelector("#adminNoteText")?.value ?? "", adminContext("Administrative note added"));
         state.mutationError = "";
       } else if (action === ADMIN_MUTATION_ACTIONS.VOID) {
         const reason = root.querySelector("#adminVoidReason")?.value ?? "";
@@ -111,6 +114,8 @@ document.addEventListener("click", event => {
   }
   const close = event.target.closest("[data-close-modal]");
   if (close) { state.activeVisitId = null; paint(); return; }
+  const openVisit = event.target.closest("[data-open-visit]");
+  if (openVisit) { state.activeVisitId = openVisit.dataset.openVisit; paint(); return; }
   const visit = event.target.closest("[data-visit]");
   if (visit) { state.activeVisitId = visit.dataset.visit; paint(); return; }
   const student = event.target.closest("[data-student]");

@@ -5,7 +5,7 @@ import { DEFAULT_PACE_RANGE_PRESET } from "../src/config.js";
 import { dateRangeForPreset, formatDateRange } from "../src/date-utils.js";
 import { makeDemoVisits } from "../src/demo-data.js";
 import { calculateVisitCount, normalizeVisit, summarize } from "../src/modules/pace/pace-analytics.js";
-import { renderOverview } from "../src/modules/pace/pace-views.js";
+import { renderActivity, renderOverview } from "../src/modules/pace/pace-views.js";
 import { rangeFromControls } from "../src/components/date-range.js";
 
 const visits = makeDemoVisits("2026-11-12").map(normalizeVisit);
@@ -17,6 +17,20 @@ test("PACE Overview defaults to 30 Days without changing date filtering", () => 
   assert.equal(initialRange.from, "2026-10-14");
   assert.equal(initialRange.to, "2026-11-12");
   assert.equal(summarize(visits, initialRange).visits, calculateVisitCount(visits.filter(visit => visit.date >= initialRange.from && visit.date <= initialRange.to)));
+});
+
+test("historical activity keeps editing available outside the default analytics window", () => {
+  const historicalRange = { preset: "custom", from: "2026-01-01", to: "2026-12-31", label: "Custom" };
+  const html = renderActivity(visits, historicalRange, { demo: true, followUps: {}, adminReviews: {}, activityFilters: {} }, null);
+  assert.match(html, /Custom range/);
+  assert.match(html, /data-open-visit="/);
+  assert.match(html, /Edit Submission/);
+});
+
+test("a source change after review is visibly marked for re-review", () => {
+  const visit = { ...visits[0], adminVersion: 2 };
+  const html = renderOverview([visit], dateRangeForPreset("30", "2026-11-12"), {}, visit, true, {}, { [visit.id]: { status: "reviewed", sourceVersion: 1, notes: [], followUpStatus: "open", history: [] } });
+  assert.match(html, /changed after it was reviewed/);
 });
 
 test("explicitly selected ranges remain supported", () => {

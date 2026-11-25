@@ -197,12 +197,14 @@ and the need to protect confidential administrative notes.
 
 Enable the workflow in stages:
 
-1. Create and secure the review and audit lists without enabling source edits.
-2. Add review-only operations through the protected service, including actor,
-   timestamp, reason, and idempotent operation ID.
+1. Create and secure the review, notes, and audit lists without enabling source
+   edits.
+2. Add review, append-only note, follow-up, void/restore, and source-correction
+   operations through the protected service, including actor, timestamp,
+   reason, and idempotent operation ID.
 3. Pilot with synthetic or explicitly approved non-sensitive records.
-4. Only after formal approval, add ETag-protected source correction through the
-   service. Keep void/restore metadata-only and permanently exclude DELETE.
+4. Only after formal approval, open the ETag-protected source correction gate.
+   Keep void/restore metadata-only and permanently exclude DELETE.
 
 ## 4. SharePoint setup package
 
@@ -220,7 +222,6 @@ Do not silently rename or substitute a field after creation.
 | `ReviewStatus` | `ReviewStatus` | Choice | Yes | `Unreviewed` | Choices: `Unreviewed`, `Reviewed`, `Needs Follow-Up` |
 | `ReviewedBy` | `ReviewedBy` | Single line of text | No | blank | — |
 | `ReviewedAt` | `ReviewedAt` | Date and Time | No | blank | — |
-| `AdminNotes` | `AdminNotes` | Multiple lines, plain text | No | blank | Restricted |
 | `FollowUpNeeded` | `FollowUpNeeded` | Yes/No | Yes | No | — |
 | `FollowUpStatus` | `FollowUpStatus` | Choice | Yes | `Open` | Choices: `Open`, `In Progress`, `Resolved` |
 | `FollowUpAssignedTo` | `FollowUpAssignedTo` | Single line of text | No | blank | — |
@@ -233,6 +234,18 @@ Do not silently rename or substitute a field after creation.
 | `RestoredAt` | `RestoredAt` | Date and Time | No | blank | — |
 | `LastReviewedRecordVersion` | `LastReviewedRecordVersion` | Single line of text | No | blank | — |
 | `LastOperationId` | `LastOperationId` | Single line of text | No | blank | Indexed |
+
+### `IEP_Pace_Admin_Notes`
+
+Use one append-only row per administrative note. Proposed display/internal
+names: `NoteID` (single line text, required, indexed, unique),
+`PACEVisitItemID` (single line text, required, indexed), `NoteText` (multiple
+lines plain text, required), `Actor` (single line text, required), `CreatedAt`
+(date/time, required, indexed), `SupersedesNoteID` (single line text, optional,
+indexed), and `OperationId` (single line text, required, indexed, unique).
+SharePoint-assigned internal names must be verified after creation. The service
+must append notes only; corrections create a new row and never update or delete
+the prior note.
 
 ### `IEP_Pace_Admin_Audit`
 
@@ -267,10 +280,10 @@ control or independently protected audit sink is still required.
 | Create or modify SharePoint records | Only the approved production workflow after formal enablement; not this assessment |
 
 The review workflow can be enabled independently from editing original PACE
-records. The first release can allow only `Review`, `AdminNotes`, follow-up,
-void metadata, and audit writes to the new lists. `IEP_Pace_Visits` remains
-read-only until the source-edit service, permissions, ETag behavior, and
-approval are complete.
+records. Review, append-only notes, follow-up, void metadata, and source edits
+belong to the same intended v1.1 release, but each capability may have a
+separate feature gate. `IEP_Pace_Visits` remains read-only until the
+source-edit service, permissions, ETag behavior, and approval are complete.
 
 ## 5. Reuse and implementation sequence
 
@@ -297,7 +310,7 @@ Do not reuse directly:
 
 ### Proposed implementation sequence
 
-1. Site owner validates the two-list schema, internal names, indexes, unique
+1. Site owner validates the three-list schema, internal names, indexes, unique
    constraints, versioning, and access groups.
 2. Entra administrator confirms whether the shared registration is acceptable,
    records redirect URIs, and approves a dedicated service identity/resource

@@ -13,6 +13,7 @@ export const FIELD_ALIASES = {
   intervention: ["Intervention Used", "Interventions", "Support", "Supports", "interventions"],
   scm: ["SCM Used", "SCM", "scmUsed"],
   notes: ["Notes", "Visit Notes", "notes"],
+  returnStatus: ["Return Status", "returnStatus"],
   submittedAt: ["Submitted At", "Created", "createdAt", "timestamp"]
 };
 
@@ -74,6 +75,7 @@ export function normalizeVisit(row = {}) {
     interventions: list(first(row, FIELD_ALIASES.intervention)),
     scmUsed: booleanOrNull(first(row, FIELD_ALIASES.scm)),
     notes: text(first(row, FIELD_ALIASES.notes)),
+    returnStatus: text(first(row, FIELD_ALIASES.returnStatus)),
     submittedAt: text(first(row, FIELD_ALIASES.submittedAt)),
     isCompleted: Boolean(timeOut)
   };

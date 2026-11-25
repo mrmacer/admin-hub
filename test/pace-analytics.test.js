@@ -29,5 +29,5 @@ test("malformed partial rows are safe and duration can be derived", () => {
   const visit = normalizeVisit({ id: 7, Student: "Casey", Date: "2026-10-01", "Time In": "13:10", "Time Out": "13:35" });
   assert.equal(visit.durationMinutes, 25);
   assert.equal(visit.scmUsed, null);
-  assert.deepEqual(normalizeVisit({}), { id: "", student: "", date: "", timeIn: "", timeOut: "", durationMinutes: null, room: "", specialists: [], teacherCameFrom: "", reasons: [], interventions: [], scmUsed: null, notes: "", submittedAt: "", isCompleted: false });
+  assert.deepEqual(normalizeVisit({}), { id: "", student: "", date: "", timeIn: "", timeOut: "", durationMinutes: null, room: "", specialists: [], teacherCameFrom: "", reasons: [], interventions: [], scmUsed: null, notes: "", returnStatus: "", submittedAt: "", isCompleted: false });
 });

@@ -202,6 +202,14 @@ td a { color: var(--blue); font-weight: 700; }
 .admin-history-row { display: grid; gap: 3px; padding: 9px; border-radius: 7px; background: #f7f9fc; }
 .admin-history-row strong { color: var(--navy); font-size: 11px; }
 .admin-history-row span, .admin-history-row small { color: var(--muted); font-size: 10px; }
+.admin-notes-list { display: grid; gap: 8px; padding-top: 18px; margin-top: 18px; border-top: 1px solid var(--line); }
+.admin-notes-list h4 { margin: 0; color: var(--navy); font-size: 12px; }
+.admin-note-row { display: grid; gap: 3px; padding: 9px; border-radius: 7px; background: #f7f9fc; }
+.admin-note-row strong { color: var(--ink); font-size: 11px; font-weight: 600; line-height: 1.4; }
+.admin-note-row span { color: var(--muted); font-size: 10px; }
+.admin-warning { padding: 10px; margin-top: 12px; border-radius: 7px; color: #805d18; background: #fff8df; font-size: 11px; line-height: 1.4; }
+.admin-review-reason { display: grid; gap: 5px; margin-top: 12px; }
+.admin-action-cell { white-space: nowrap; }
 .compact-button { margin-top: 18px; }
 .center-state { min-height: 100vh; display: grid; place-content: center; justify-items: center; padding: 30px; text-align: center; }
 .center-state h1 { margin-top: 15px; font-size: 30px; }

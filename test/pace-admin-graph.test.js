@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { createPaceAdminGraphAdapter, PartialAdminOperationError } from "../src/modules/pace/pace-admin-graph.js";
 
 const schemas = {
-  IEP_Pace_Visits: Object.fromEntries(["Student", "Teacher Came From", "Room", "Behavior Specialist", "Time In", "Time Out", "Reason", "Intervention Used", "SCM", "Notes", "Duration"].map(name => [name, `pace_${name.replaceAll(" ", "_")}`])),
-  IEP_Pace_Admin_Reviews: Object.fromEntries(["PACEVisitItemID", "ReviewStatus", "ReviewedBy", "ReviewedAt", "AdminNotes", "FollowUpNeeded", "FollowUpStatus", "FollowUpAssignedTo", "FollowUpDueDate", "IsVoided", "VoidReason", "VoidedBy", "VoidedAt", "RestoredBy", "RestoredAt", "LastReviewedRecordVersion", "LastOperationId"].map(name => [name, `review_${name.replaceAll(" ", "_")}`])),
+  IEP_Pace_Visits: Object.fromEntries(["Student", "Date", "Teacher Came From", "Room", "Behavior Specialist", "Time In", "Time Out", "Reason", "Intervention Used", "SCM", "Notes", "Duration", "Return Status"].map(name => [name, `pace_${name.replaceAll(" ", "_")}`])),
+  IEP_Pace_Admin_Reviews: Object.fromEntries(["PACEVisitItemID", "ReviewStatus", "ReviewedBy", "ReviewedAt", "FollowUpNeeded", "FollowUpStatus", "FollowUpAssignedTo", "FollowUpDueDate", "IsVoided", "VoidReason", "VoidedBy", "VoidedAt", "RestoredBy", "RestoredAt", "LastReviewedRecordVersion", "LastOperationId"].map(name => [name, `review_${name.replaceAll(" ", "_")}`])),
+  IEP_Pace_Admin_Notes: Object.fromEntries(["NoteID", "PACEVisitItemID", "NoteText", "Actor", "CreatedAt", "SupersedesNoteID", "OperationId"].map(name => [name, `note_${name.replaceAll(" ", "_")}`])),
   IEP_Pace_Admin_Audit: Object.fromEntries(["PACEVisitItemID", "OperationId", "ActionType", "Actor", "Timestamp", "ChangedFields", "PreviousValues", "NewValues", "Reason", "SourceRecordVersion"].map(name => [name, `audit_${name.replaceAll(" ", "_")}`]))
 };
 
@@ -13,11 +14,12 @@ function clone(value) { return structuredClone(value); }
 function createMockGraph({ failAudit = false } = {}) {
   const calls = []; let sequence = 10; let shouldFailAudit = failAudit;
   const lists = {
-    pace: { id: "pace-1", items: { "42": { id: "42", "@odata.etag": 'W/"1"', fields: { pace_Student: "Synthetic Student", pace_Teacher_Came_From: "Synthetic Classroom", pace_Room: "PACE Room 1", pace_Behavior_Specialist: ["Synthetic Specialist"], pace_Time_In: "08:00", pace_Time_Out: "08:20", pace_Reason: ["Break request"], pace_Intervention_Used: ["Calm space"], pace_SCM: false, pace_Notes: "Original synthetic note.", pace_Duration: 20 } } } },
+    pace: { id: "pace-1", items: { "42": { id: "42", "@odata.etag": 'W/"1"', fields: { pace_Student: "Synthetic Student", pace_Date: "2026-11-25", pace_Teacher_Came_From: "Synthetic Classroom", pace_Room: "PACE Room 1", pace_Behavior_Specialist: ["Synthetic Specialist"], pace_Time_In: "08:00", pace_Time_Out: "08:20", pace_Reason: ["Break request"], pace_Intervention_Used: ["Calm space"], pace_SCM: false, pace_Notes: "Original synthetic note.", pace_Duration: 20, pace_Return_Status: "Returned" } } } },
     reviews: { id: "reviews-1", items: {} },
+    notes: { id: "notes-1", items: {} },
     audit: { id: "audit-1", items: {} }
   };
-  const listKey = listName => listName === "IEP_Pace_Visits" ? "pace" : listName === "IEP_Pace_Admin_Reviews" ? "reviews" : "audit";
+  const listKey = listName => listName === "IEP_Pace_Visits" ? "pace" : listName === "IEP_Pace_Admin_Reviews" ? "reviews" : listName === "IEP_Pace_Admin_Notes" ? "notes" : "audit";
   const mock = {
     calls,
     async getSiteId() { return "site-1"; },
@@ -67,6 +69,16 @@ test("mocked production adapter updates only mapped fields and verifies the save
   assert.equal(mock.calls.filter(call => call.method === "DELETE").length, 0);
 });
 
+test("source edits map student, date, teacher and return fields while preserving the stable item id", async () => {
+  const mock = createMockGraph(); const adapter = createPaceAdminGraphAdapter({ graphClient: mock, writeEnabled: true, authorized: true, testMode: true });
+  const result = await adapter.updatePaceFields("42", { student: "Corrected Student", date: "2026-11-24", teacherCameFrom: "Corrected Classroom", returnStatus: "Returned to class" }, { expectedEtag: 'W/"1"' });
+  assert.equal(result.item.id, "42");
+  assert.deepEqual(result.changed.sort(), ["Student", "Date", "Teacher Came From", "Return Status"].sort());
+  assert.deepEqual(result.previousValues, { Student: "Synthetic Student", Date: "2026-11-25", "Teacher Came From": "Synthetic Classroom", "Return Status": "Returned" });
+  const patch = mock.calls.find(call => call.method === "PATCH" && call.path.includes("pace-1"));
+  assert.equal(patch.options.headers["If-Match"], 'W/"1"');
+});
+
 test("stale source ETags are rejected before any PATCH", async () => {
   const mock = createMockGraph(); const adapter = createPaceAdminGraphAdapter({ graphClient: mock, writeEnabled: true, authorized: true, testMode: true });
   await assert.rejects(() => adapter.updatePaceFields("42", { room: "PACE Room 3" }, { expectedEtag: 'W/"stale"' }), error => error.code === "STALE_RECORD");
@@ -75,12 +87,18 @@ test("stale source ETags are rejected before any PATCH", async () => {
 
 test("review metadata and audit events persist through mocked Graph storage", async () => {
   const mock = createMockGraph(); const adapter = createPaceAdminGraphAdapter({ graphClient: mock, writeEnabled: true, authorized: true, testMode: true });
-  const result = await adapter.saveReview({ visitId: "42", review: { reviewStatus: "Reviewed", adminNotes: "Synthetic administrative note", followUpNeeded: true, followUpStatus: "Open" }, actor: admin.actor, reason: "Synthetic review", operationId: "op-review-1", timestamp: "2026-11-25T15:00:00.000Z" });
+  const result = await adapter.saveReview({ visitId: "42", review: { reviewStatus: "Reviewed", followUpNeeded: true, followUpStatus: "Open" }, actor: admin.actor, reason: "Synthetic review", operationId: "op-review-1", timestamp: "2026-11-25T15:00:00.000Z" });
   assert.equal(result.reviewResult.fields.ReviewStatus, "Reviewed");
-  assert.equal(result.reviewResult.fields.AdminNotes, "Synthetic administrative note");
   assert.equal(result.auditResult.item.fields.OperationId, "op-review-1");
   const review = await adapter.getReview("42");
   assert.equal(review.fields.ReviewedBy, admin.actor);
+  const note = await adapter.appendAdminNote({ visitId: "42", text: "Synthetic administrative note", actor: admin.actor, operationId: "op-note-1", timestamp: "2026-11-25T15:01:00.000Z" });
+  assert.equal(note.note.fields.NoteText, "Synthetic administrative note");
+  assert.equal(note.note.fields.Actor, admin.actor);
+  assert.equal((await adapter.listAdminNotes("42")).length, 1);
+  const duplicate = await adapter.appendAdminNote({ visitId: "42", text: "Synthetic administrative note", actor: admin.actor, operationId: "op-note-1", timestamp: "2026-11-25T15:01:00.000Z" });
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(mock.calls.some(call => call.method === "DELETE" && call.path.includes("notes-1")), false);
 });
 
 test("partial failures expose completed stages and a retry-safe operation ID", async () => {

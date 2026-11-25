@@ -42,8 +42,12 @@ Vercel project ID, and build command before deployment.
 - Preserve Microsoft Entra/MSAL authentication.
 - Preserve administrator authorization through the existing authorization flow.
 - Preserve deployment protection unless explicitly authorized otherwise.
-- `IEP_Pace_Visits` is read-only from Admin Hub.
-- Never create, update, or delete SharePoint records as part of dashboard work.
+- Administrative editing of existing `IEP_Pace_Visits` submissions is the
+  primary v1.1 release requirement, but production writes remain disabled until
+  the protected service, permissions, note storage, audit protection, and
+  preservation controls are approved and verified.
+- Never create replacement PACE records or issue a Graph `DELETE` for a PACE
+  submission. Source corrections must PATCH the existing item ID.
 - Never commit credentials, tokens, `.env` files, or generated production
   configuration.
 - Do not modify SharePoint permissions or MAC-Walkthrough from this repository.
@@ -65,6 +69,21 @@ The current query depends on a non-indexed SharePoint date field. It works at
 the current scale, but may become less reliable as the list grows. Investigate
 indexed SharePoint columns and a tested migration path before changing the
 query or data model.
+
+## Administrative workflow baseline
+
+The synthetic workflow supports source-field correction, duration recalculation,
+historical search through a Custom date range, Mark as Viewed, follow-up,
+reversible void/restore, and chronological administrative notes. Administrative
+notes are append-only entries separate from original staff notes. The protected
+production service must support the same workflow with ETag concurrency,
+post-save verification, source version capture, and a dedicated
+`IEP_Pace_Admin_Notes` store before the production gate is opened.
+
+The local server-only request boundary is
+`src/modules/pace/pace-admin-service.js`; it must not be imported by browser UI
+code. The actionable SharePoint, Entra, ownership, verification, and rollback
+handoff is [`docs/ADMIN_REVIEW_PRODUCTION_CHECKLIST.md`](docs/ADMIN_REVIEW_PRODUCTION_CHECKLIST.md).
 
 ## Required verification
 

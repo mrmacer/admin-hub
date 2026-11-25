@@ -16,11 +16,12 @@ export const ADMIN_MUTATION_ACTIONS = {
   EDIT: "edit",
   REVIEW: "review",
   MARK_VIEWED: "mark-viewed",
+  ADD_NOTE: "add-note",
   VOID: "void",
   RESTORE: "restore"
 };
 
-const EDITABLE_FIELDS = ["student", "teacherCameFrom", "room", "specialists", "timeIn", "timeOut", "reasons", "interventions", "scmUsed", "notes"];
+const EDITABLE_FIELDS = ["student", "date", "teacherCameFrom", "room", "specialists", "timeIn", "timeOut", "reasons", "interventions", "scmUsed", "notes", "returnStatus"];
 
 function copy(value) { return value === undefined ? value : structuredClone(value); }
 
@@ -37,7 +38,7 @@ function reviewEntry(visitId, details = {}) {
   return {
     visitId,
     status: details.status ?? REVIEW_STATUS.UNREVIEWED,
-    adminNotes: details.adminNotes ?? "",
+    notes: copy(details.notes ?? []),
     followUpStatus: details.followUpStatus ?? "open",
     followUpAssignedTo: details.followUpAssignedTo ?? "",
     followUpDueDate: details.followUpDueDate ?? "",
@@ -45,6 +46,7 @@ function reviewEntry(visitId, details = {}) {
     voidReason: details.voidReason ?? "",
     reviewedBy: details.reviewedBy ?? null,
     reviewedAt: details.reviewedAt ?? null,
+    sourceVersion: details.sourceVersion ?? null,
     version: details.version ?? 1,
     history: copy(details.history ?? [])
   };
@@ -57,12 +59,12 @@ export function seedAdminReviews(visits) {
   const add = (id, details) => { if (visits.some(visit => visit.id === id)) seeded[id] = reviewEntry(id, details); };
   add("demo-001", {
     status: REVIEW_STATUS.REVIEWED,
-    adminNotes: "Synthetic review complete; no production record is connected.",
+    notes: [{ id: "demo-note-001", visitId: "demo-001", text: "Synthetic review complete; no production record is connected.", actor: "Jordan Ellis — Administrator", createdAt: "2026-10-03T10:00:00.000Z" }],
     reviewedBy: "Jordan Ellis — Administrator",
     reviewedAt: "2026-10-03T10:00:00.000Z",
     history: [{ action: ADMIN_MUTATION_ACTIONS.REVIEW, actor: "Jordan Ellis — Administrator", at: "2026-10-03T10:00:00.000Z", reason: "Synthetic demo review" }]
   });
-  add("demo-002", { status: REVIEW_STATUS.NEEDS_FOLLOW_UP, adminNotes: "Synthetic follow-up requested.", followUpStatus: "open", reviewedBy: "Jordan Ellis — Administrator", reviewedAt: "2026-10-03T11:00:00.000Z" });
+  add("demo-002", { status: REVIEW_STATUS.NEEDS_FOLLOW_UP, notes: [{ id: "demo-note-002", visitId: "demo-002", text: "Synthetic follow-up requested.", actor: "Jordan Ellis — Administrator", createdAt: "2026-10-03T11:00:00.000Z" }], followUpStatus: "open", reviewedBy: "Jordan Ellis — Administrator", reviewedAt: "2026-10-03T11:00:00.000Z", sourceVersion: 1 });
   add("demo-003", { isVoided: true, voidReason: "Synthetic duplicate submission", history: [{ action: ADMIN_MUTATION_ACTIONS.VOID, actor: "Jordan Ellis — Administrator", at: "2026-10-03T12:00:00.000Z", reason: "Synthetic duplicate submission" }] });
   return seeded;
 }
@@ -103,6 +105,7 @@ function listValue(value) {
 export function normalizeEditDraft(draft = {}) {
   return {
     student: String(draft.student ?? "").trim(),
+    date: String(draft.date ?? "").trim(),
     teacherCameFrom: String(draft.teacherCameFrom ?? "").trim(),
     room: String(draft.room ?? "").trim(),
     specialists: listValue(draft.specialists),
@@ -111,7 +114,8 @@ export function normalizeEditDraft(draft = {}) {
     reasons: listValue(draft.reasons),
     interventions: listValue(draft.interventions),
     scmUsed: draft.scmUsed === "" || draft.scmUsed === null || draft.scmUsed === undefined ? null : Boolean(draft.scmUsed === true || draft.scmUsed === "true" || draft.scmUsed === "yes"),
-    notes: String(draft.notes ?? "").trim()
+    notes: String(draft.notes ?? "").trim(),
+    returnStatus: String(draft.returnStatus ?? "").trim()
   };
 }
 
@@ -151,25 +155,35 @@ export function saveDemoReview(reviews, visitId, input = {}, context = {}) {
   if (!Object.values(REVIEW_STATUS).includes(input.status)) throw new Error("Choose a valid review status.");
   const at = now(context);
   const event = { action: ADMIN_MUTATION_ACTIONS.REVIEW, actor: administrator, at, reason: String(input.reason ?? "Review status saved").trim() || "Review status saved" };
-  return updateReview(reviews, visitId, { status: input.status, adminNotes: String(input.adminNotes ?? "").trim(), followUpStatus: String(input.followUpStatus ?? "open"), followUpAssignedTo: String(input.followUpAssignedTo ?? "").trim(), followUpDueDate: String(input.followUpDueDate ?? "").trim(), reviewedBy: administrator, reviewedAt: at }, event);
+  return updateReview(reviews, visitId, { status: input.status, followUpStatus: String(input.followUpStatus ?? "open"), followUpAssignedTo: String(input.followUpAssignedTo ?? "").trim(), followUpDueDate: String(input.followUpDueDate ?? "").trim(), reviewedBy: administrator, reviewedAt: at, sourceVersion: context.sourceVersion ?? adminReviewFor(reviews, visitId).sourceVersion }, event);
 }
 
 export function markDemoViewed(reviews, visitId, context = {}) {
   const administrator = actor(context); const at = now(context); const current = adminReviewFor(reviews, visitId);
   return updateReview(reviews, visitId, {
     status: REVIEW_STATUS.REVIEWED,
-    adminNotes: current.adminNotes,
     followUpStatus: current.followUpStatus,
     followUpAssignedTo: current.followUpAssignedTo,
     followUpDueDate: current.followUpDueDate,
     reviewedBy: administrator,
-    reviewedAt: at
+    reviewedAt: at,
+    sourceVersion: context.sourceVersion ?? current.sourceVersion
   }, { action: ADMIN_MUTATION_ACTIONS.MARK_VIEWED, actor: administrator, at, reason: "Marked as viewed" });
 }
 
 export function recordDemoEdit(reviews, visitId, context = {}) {
   const administrator = actor(context); const at = now(context);
   return updateReview(reviews, visitId, {}, { action: ADMIN_MUTATION_ACTIONS.EDIT, actor: administrator, at, reason: String(context.reason ?? "Synthetic correction").trim() || "Synthetic correction" });
+}
+
+export function adminNotesFor(reviews, visitId) { return copy(adminReviewFor(reviews, visitId).notes ?? []); }
+
+export function addDemoAdminNote(reviews, visitId, text, context = {}) {
+  const administrator = actor(context); const value = String(text ?? "").trim();
+  if (!value) throw new Error("Administrative note text is required.");
+  const at = now(context); const current = adminReviewFor(reviews, visitId);
+  const note = { id: String(context.noteId ?? `demo-note-${visitId}-${at}`), visitId, text: value, actor: administrator, createdAt: at, supersedesNoteId: context.supersedesNoteId ?? null };
+  return updateReview(reviews, visitId, { notes: [...(current.notes ?? []), note] }, { action: ADMIN_MUTATION_ACTIONS.ADD_NOTE, actor: administrator, at, reason: "Administrative note added", noteId: note.id });
 }
 
 export function voidDemoVisit(reviews, visitId, context = {}) {

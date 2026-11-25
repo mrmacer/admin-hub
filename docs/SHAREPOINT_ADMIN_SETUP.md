@@ -4,7 +4,7 @@ Status: design and IT review only. This guide does not create lists, change perm
 
 ## Purpose
 
-Admin Hub currently reads PACE submissions from `IEP_Pace_Visits`. Phase 2 prepares a controlled administrative workflow for correcting existing submissions, recording independent administrative notes, reviewing records, tracking follow-up, and voiding/restoring records without deleting the original item.
+Admin Hub currently reads PACE submissions from `IEP_Pace_Visits`. The v1.1 release must support authorized corrections to existing submissions as its primary capability, alongside independent chronological administrative notes, review status, follow-up, and reversible void/restore without deleting the original item.
 
 The original PACE item ID remains the relationship key. Admin Hub must never create a replacement PACE submission or issue a Graph `DELETE` for a PACE submission.
 
@@ -16,9 +16,9 @@ The original PACE item ID remains the relationship key. Admin Hub must never cre
 - PACE list version history: enabled; 50 versions retained
 - PACE list permissions: inherited from the site
 - Observed groups: `IEP_Skook Members` has Edit, `IEP_Skook Visitors` has Read, and Owners/Admins have Full Control
-- Existing administrative review/audit list: none found
+- Existing administrative review/audit/note lists: none found
 
-The PACE list currently contains the supported source fields used by Admin Hub, including Student, Date, Time In, Time Out, Duration, Staff Member, Reason, Intervention Used, Notes, Teacher Came From, Behavior Specialist, Room, SCM, Created and Modified. The current production date query must retain quoted SharePoint date literals and `Prefer: HonorNonIndexedQueriesWarningMayFailRandomly`.
+The PACE list currently contains the supported source fields used by Admin Hub, including Student, Date, Time In, Time Out, Duration, Staff Member, Reason, Intervention Used, Notes, Teacher Came From, Behavior Specialist, Room, SCM, Return Status, Created and Modified. The current production date query must retain quoted SharePoint date literals and `Prefer: HonorNonIndexedQueriesWarningMayFailRandomly`.
 
 ## Proposed review list
 
@@ -32,7 +32,6 @@ Create this list only after IT and data-owner approval. Use one row per PACE vis
 | ReviewStatus | Choice | Yes | Unreviewed | Unreviewed; Reviewed; Needs Follow-Up |
 | ReviewedBy | Single line of text | No | — | Store authenticated UPN/display identity written by the adapter |
 | ReviewedAt | Date and Time | No | — | — |
-| AdminNotes | Multiple lines of text, plain text | No | — | — |
 | FollowUpNeeded | Yes/No | Yes | No | — |
 | FollowUpStatus | Choice | Yes | Open | Open; In Progress; Resolved |
 | FollowUpAssignedTo | Single line of text | No | — | — |
@@ -48,7 +47,34 @@ Create this list only after IT and data-owner approval. Use one row per PACE vis
 
 Identity fields are text deliberately: the browser adapter can write the authenticated UPN without relying on undocumented person-field payload conventions. If IT requires Person or Group columns, the adapter must be updated and tested with the tenant’s actual lookup behavior before production enablement.
 
-The review list must be restricted to the authorized administrator group. Ordinary PACE Room Tracker users must not receive access to `AdminNotes`, void reasons, or audit details.
+The review list must be restricted to the authorized administrator group. Ordinary PACE Room Tracker users must not receive access to void reasons, administrative notes, or audit details.
+
+## Proposed running-notes list
+
+Proposed list name: `IEP_Pace_Admin_Notes`
+
+Use one row per administrative note. This dedicated list is preferable to a
+single multiline field on the review row because it preserves chronological
+entries, allows multiple administrators to contribute without overwriting one
+another, and supports append-only service behavior. The service must never
+update or delete an existing note. A correction creates a new row referencing
+the prior note.
+
+| Display name | Proposed internal name | SharePoint type | Required | Default | Index/constraint |
+| --- | --- | --- | --- | --- | --- |
+| NoteID | `NoteID` | Single line of text | Yes | — | Indexed and enforce unique values |
+| PACEVisitItemID | `PACEVisitItemID` | Single line of text | Yes | — | Indexed |
+| NoteText | `NoteText` | Multiple lines of text, plain text | Yes | — | Restricted |
+| Actor | `Actor` | Single line of text | Yes | — | Authenticated administrator identity |
+| CreatedAt | `CreatedAt` | Date and Time | Yes | — | Indexed for chronological retrieval |
+| SupersedesNoteID | `SupersedesNoteID` | Single line of text | No | blank | Indexed; prior note reference |
+| OperationId | `OperationId` | Single line of text | Yes | — | Indexed and enforce unique values |
+
+The internal names above are proposed names and must be verified after list
+creation because SharePoint owns internal-name assignment. `OperationId`
+provides retry idempotency; `NoteID` is the stable note identifier shown to
+the application. Restrict this list to the approved administrator/service
+group and apply the selected retention/records control.
 
 ## Proposed audit list
 
@@ -80,17 +106,20 @@ The administrative workflow must:
 1. Read the current source item and ETag.
 2. Send only changed source fields.
 3. Re-read and verify the saved fields.
-4. Write review metadata and an audit event using the same operation ID.
+4. Write review metadata, append-only note rows when requested, and an audit
+   event using the same operation ID.
 5. Report partial completion if the separate list writes do not all succeed.
 6. Permit a retry with the same operation ID; duplicate audit events must be detected.
 
-There is no atomic transaction across the PACE, review, and audit lists. A partial-operation error is therefore a normal recoverable state, not a successful save.
+There is no atomic transaction across the PACE, review, notes, and audit lists.
+A partial-operation error is therefore a normal recoverable state, not a
+successful save.
 
 ## Permission recommendation for IT review
 
 ### Preferred architecture: protected service boundary
 
-Use a small server-side API or function for production mutations. Keep Microsoft Graph credentials and any application secret out of browser code. The API should validate the signed-in administrator, apply the Admin Hub allowlist, enforce the write gate, perform ETag-protected updates, and write review/audit records.
+Use a small server-side API or function for production mutations. Keep Microsoft Graph credentials and any application secret out of browser code. The API should validate the signed-in administrator, apply the Admin Hub allowlist, enforce the write gate, perform ETag-protected updates, append running notes without update/delete operations, and write review/audit records.
 
 For the service identity, evaluate Microsoft Graph selected-resource permissions such as `Sites.Selected` or the newer list-scoped `Lists.SelectedOperations.Selected`, assigned only to the required SharePoint resources. Microsoft documents that selected permissions require explicit resource assignment and do not automatically grant access. The API must still enforce user authorization because app-only access has no end-user identity.
 
@@ -122,14 +151,16 @@ Microsoft references:
 
 1. Create `IEP_Pace_Admin_Reviews` with the schema above.
 2. Create and index `PACEVisitItemID`; enable unique values.
-3. Create `IEP_Pace_Admin_Audit` with the schema above.
-4. Create and index `OperationId`; enable unique values.
-5. Enable versioning on both administrative lists and record the retention limit.
-6. Restrict both lists to the approved administrator group and the service identity, if used.
-7. Configure selected Graph permissions or approve delegated write consent.
-8. Verify list permissions, custom no-delete behavior, and direct Graph PATCH behavior in a non-production pilot.
-9. Run the mocked adapter tests and a controlled pilot using non-sensitive test records.
-10. Obtain explicit production enablement approval, then change the feature gate in a reviewed release.
+3. Create `IEP_Pace_Admin_Notes` with the schema above.
+4. Create and index `NoteID` and `OperationId`; enable unique values.
+5. Create `IEP_Pace_Admin_Audit` with the schema above.
+6. Create and index audit `OperationId`; enable unique values.
+7. Enable versioning on all administrative lists and record the retention limit.
+8. Restrict all administrative lists to the approved administrator group and the service identity, if used.
+9. Configure selected Graph permissions or approve delegated write consent.
+10. Verify list permissions, append-only note behavior, custom no-delete behavior, and direct Graph PATCH behavior in a non-production pilot.
+11. Run the mocked adapter tests and a controlled pilot using non-sensitive test records.
+12. Obtain explicit production enablement approval, then change the feature gate in a reviewed release.
 
 ## Verification checklist
 
@@ -138,6 +169,8 @@ Microsoft references:
 - [ ] No Microsoft permissions changed.
 - [ ] Review-list unique key rejects duplicate PACE IDs.
 - [ ] Audit OperationId unique key rejects duplicate operations.
+- [ ] NoteID and note OperationId unique keys reject duplicate notes.
+- [ ] Existing administrative notes cannot be updated or deleted by the service.
 - [ ] Source PACE item ID is never replaced.
 - [ ] Source PATCH uses only changed fields and `If-Match`.
 - [ ] Stale ETags return a recoverable conflict.
