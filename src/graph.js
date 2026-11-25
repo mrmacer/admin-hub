@@ -19,6 +19,12 @@ export function mapGraphItemsToDisplay(items, schema) {
   return (items ?? []).map(item => { const row = { id: item.id, Created: item.createdDateTime ?? "" }; for (const [key, value] of Object.entries(item.fields ?? item)) if (key !== "id") row[inverse[key] ?? key] = value; return row; });
 }
 
+export function buildGraphDateFilter(fieldName, from, to) {
+  const start = toGraphUtcBoundary(from);
+  const end = toGraphUtcBoundary(to, true);
+  return `fields/${fieldName} ge ${start} and fields/${fieldName} lt ${end}`;
+}
+
 export const GRAPH = {
   base: "https://graph.microsoft.com/v1.0", siteId: null, listIds: new Map(), schemas: new Map(),
   async get(path) {
@@ -52,7 +58,7 @@ export const GRAPH = {
     const siteId = await this.getSiteId(); const listId = await this.getListId(listName); const schema = await this.getSchema(listName);
     let path = `sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200`;
     if (options.from && options.to && schema.Date) {
-      const filter = `fields/${schema.Date} ge '${toGraphUtcBoundary(options.from)}' and fields/${schema.Date} lt '${toGraphUtcBoundary(options.to, true)}'`;
+      const filter = buildGraphDateFilter(schema.Date, options.from, options.to);
       path += `&$filter=${encodeURIComponent(filter)}`;
     }
     const items = await fetchAllGraphPages(pathValue => this.get(pathValue), path, this.base);
