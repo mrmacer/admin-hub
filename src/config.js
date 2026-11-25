@@ -3,6 +3,9 @@ import { APP_ENV, IS_DEMO } from "./environment.js";
 export { APP_ENV };
 export const APP_MODE = APP_ENV;
 export const DEFAULT_PACE_RANGE_PRESET = "30";
+// Production writes remain disabled until approved Graph permissions, review
+// storage, and record-preservation controls have been verified.
+export const PRODUCTION_ADMIN_WRITES_ENABLED = false;
 
 export const CONFIG = {
   appName: "Admin Hub",

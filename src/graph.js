@@ -1,4 +1,4 @@
-import { CONFIG } from "./config.js";
+import { CONFIG, PRODUCTION_ADMIN_WRITES_ENABLED } from "./config.js";
 import { toGraphUtcBoundary } from "./date-utils.js";
 import { APP_ENV } from "./environment.js";
 
@@ -27,12 +27,20 @@ export function buildGraphDateFilter(fieldName, from, to) {
 
 export const GRAPH = {
   base: "https://graph.microsoft.com/v1.0", siteId: null, listIds: new Map(), schemas: new Map(),
-  async get(path, extraHeaders = {}) {
+  async request(method, path, { headers = {}, body } = {}) {
     assertProductionGraph();
+    if (method !== "GET" && !PRODUCTION_ADMIN_WRITES_ENABLED) throw new Error("Admin Hub production mutations are disabled by the feature gate.");
     const token = await this.token();
-    const response = await fetch(`${this.base}/${path}`, { headers: { Authorization: `Bearer ${token}`, ...extraHeaders } });
-    if (!response.ok) throw new Error(`Microsoft Graph request failed (${response.status}).`);
+    const response = await fetch(`${this.base}/${path}`, { method, headers: { Authorization: `Bearer ${token}`, ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`Microsoft Graph request failed (${response.status}).${detail ? ` ${detail}` : ""}`);
+    }
+    if (response.status === 204) return null;
     return response.json();
+  },
+  async get(path, extraHeaders = {}) {
+    return this.request("GET", path, { headers: extraHeaders });
   },
   async token() { assertProductionGraph(); return window.AUTH_TOKEN ?? (await window.AUTH.acquireGraphToken?.()); },
   async getSiteId() { assertProductionGraph(); if (!this.siteId) this.siteId = (await this.get(`sites/${CONFIG.sitePath}`)).id; return this.siteId; },

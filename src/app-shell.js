@@ -18,10 +18,10 @@ function shell(state, content) {
 
 export function renderApp(state) {
   const route = currentRoute(); const activeVisit = state.activeVisitId ? state.visits.find(visit => visit.id === state.activeVisitId) : null;
-  let content = renderHome(state.visits, state.range, state.followUps, activeVisit, state.demo);
-  if (route.page === "pace") content = renderOverview(state.visits, state.range, state.followUps, activeVisit, state.demo);
+  let content = renderHome(state.visits, state.range, state.followUps, activeVisit, state.demo, {}, state.adminReviews, state.mutationError);
+  if (route.page === "pace") content = renderOverview(state.visits, state.range, state.followUps, activeVisit, state.demo, {}, state.adminReviews, state.mutationError);
   if (route.page === "students") content = renderStudents(state.visits, state.range, state, activeVisit);
-  if (route.page === "student-detail") content = renderStudentDetail(state.visits, state.range, route.student, state.followUps, activeVisit, state.demo);
+  if (route.page === "student-detail") content = renderStudentDetail(state.visits, state.range, route.student, state.followUps, activeVisit, state.demo, state.adminReviews, state.mutationError);
   if (route.page === "activity") content = renderActivity(state.visits, state.range, state, activeVisit);
   return shell(state, content);
 }
