@@ -18,10 +18,9 @@ test("Admin Hub Graph client exposes read-only PACE operations", () => {
   assert.throws(() => GRAPH.deleteListItem(), /read-only/);
 });
 
-test("Graph date filters use unquoted DateTimeOffset literals", () => {
+test("Graph date filters preserve SharePoint field date literals", () => {
   assert.equal(
     buildGraphDateFilter("field_1", "2026-10-01", "2026-10-30"),
-    "fields/field_1 ge 2026-10-01T04:00:00.000Z and fields/field_1 lt 2026-10-31T04:00:00.000Z"
+    "fields/field_1 ge '2026-10-01T04:00:00.000Z' and fields/field_1 lt '2026-10-31T04:00:00.000Z'"
   );
-  assert.doesNotMatch(buildGraphDateFilter("field_1", "2026-10-01", "2026-10-30"), /'/);
 });

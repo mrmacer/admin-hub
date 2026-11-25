@@ -22,15 +22,15 @@ export function mapGraphItemsToDisplay(items, schema) {
 export function buildGraphDateFilter(fieldName, from, to) {
   const start = toGraphUtcBoundary(from);
   const end = toGraphUtcBoundary(to, true);
-  return `fields/${fieldName} ge ${start} and fields/${fieldName} lt ${end}`;
+  return `fields/${fieldName} ge '${start}' and fields/${fieldName} lt '${end}'`;
 }
 
 export const GRAPH = {
   base: "https://graph.microsoft.com/v1.0", siteId: null, listIds: new Map(), schemas: new Map(),
-  async get(path) {
+  async get(path, extraHeaders = {}) {
     assertProductionGraph();
     const token = await this.token();
-    const response = await fetch(`${this.base}/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    const response = await fetch(`${this.base}/${path}`, { headers: { Authorization: `Bearer ${token}`, ...extraHeaders } });
     if (!response.ok) throw new Error(`Microsoft Graph request failed (${response.status}).`);
     return response.json();
   },
@@ -61,7 +61,8 @@ export const GRAPH = {
       const filter = buildGraphDateFilter(schema.Date, options.from, options.to);
       path += `&$filter=${encodeURIComponent(filter)}`;
     }
-    const items = await fetchAllGraphPages(pathValue => this.get(pathValue), path, this.base);
+    const filterHeaders = options.from && options.to && schema.Date ? { Prefer: "HonorNonIndexedQueriesWarningMayFailRandomly" } : {};
+    const items = await fetchAllGraphPages(pathValue => this.get(pathValue, filterHeaders), path, this.base);
     return mapGraphItemsToDisplay(items, schema);
   },
   async getPaceVisits(range) { return this.getListItems(CONFIG.lists.paceVisits, range); },
