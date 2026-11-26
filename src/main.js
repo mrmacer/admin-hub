@@ -9,12 +9,17 @@ import { applyFollowUpAction, seedFollowUps } from "./modules/pace/pace-follow-u
 import { normalizeVisit } from "./modules/pace/pace-analytics.js";
 import { ADMIN_MUTATION_ACTIONS, REVIEW_STATUS, addDemoAdminNote, applyDemoEdit, markDemoViewed, recordDemoEdit, restoreDemoVisit, saveDemoReview, seedAdminReviews, voidDemoVisit } from "./modules/pace/pace-admin.js";
 import { ADMIN_API } from "./admin-api.js";
+import { isIntentionalModalDismissal } from "./modal.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
-const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, adminReviews: {}, adminReviewsSeeded: false, demoSnapshotLoaded: false, adminEtags: {}, production: { apiReady: ADMIN_API.configured, writesEnabled: ADMIN_API.writesEnabled }, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, mutationError: "" };
+const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, adminReviews: {}, adminReviewsSeeded: false, demoSnapshotLoaded: false, adminEtags: {}, production: { apiReady: ADMIN_API.configured, writesEnabled: ADMIN_API.writesEnabled }, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, editorDraft: null, mutationError: "" };
 
-function paint() { root.innerHTML = renderApp(state); }
+function paint() {
+  if (state.activeVisitId && root.querySelector(".modal")) state.editorDraft = captureEditorDraft();
+  root.innerHTML = renderApp(state);
+  restoreEditorDraft();
+}
 
 function readDemoSnapshot() {
   if (!state.demo || !globalThis.localStorage) return null;
@@ -29,7 +34,7 @@ function persistDemoSnapshot() {
 function resetDemoSnapshot() {
   if (!state.demo) return;
   try { globalThis.localStorage?.removeItem(CONFIG.demoStorageKey); } catch { /* Browser storage is optional for the demo. */ }
-  PACE_DATA.clear(); state.visits = []; state.followUps = {}; state.followUpsSeeded = false; state.adminReviews = {}; state.adminReviewsSeeded = false; state.demoSnapshotLoaded = false; state.activeVisitId = null; state.mutationError = "";
+  PACE_DATA.clear(); state.visits = []; state.followUps = {}; state.followUpsSeeded = false; state.adminReviews = {}; state.adminReviewsSeeded = false; state.demoSnapshotLoaded = false; state.activeVisitId = null; state.editorDraft = null; state.mutationError = "";
 }
 
 async function loadMsalForProduction() {
@@ -59,6 +64,33 @@ function adminContext(reason) { return { authorized: state.demo || (APP_ENV === 
 function readEditDraft() {
   const value = id => root.querySelector(`#${id}`)?.value ?? "";
   return { student: value("adminStudent"), date: value("adminDate"), teacherCameFrom: value("adminTeacher"), room: value("adminRoom"), specialists: value("adminSpecialists"), timeIn: value("adminTimeIn"), timeOut: value("adminTimeOut"), reasons: value("adminReasons"), interventions: value("adminInterventions"), scmUsed: root.querySelector("#adminScm")?.value ?? "", notes: value("adminNotesSource"), returnStatus: value("adminReturnStatus") };
+}
+
+function captureEditorDraft() {
+  const value = id => root.querySelector(`#${id}`)?.value ?? "";
+  return {
+    edit: readEditDraft(),
+    correctionReason: value("adminCorrectionReason"),
+    reviewStatus: value("adminReviewStatus"),
+    followUpStatus: value("adminFollowUpStatus"),
+    followUpAssignedTo: value("adminFollowUpAssignedTo"),
+    followUpDueDate: value("adminFollowUpDueDate"),
+    noteText: value("adminNoteText"),
+    reviewReason: value("adminReviewReason"),
+    voidReason: value("adminVoidReason"),
+    followUpNote: value("followUpNote")
+  };
+}
+
+function restoreEditorDraft() {
+  if (!state.editorDraft) return;
+  const draft = state.editorDraft;
+  const values = { ...draft.edit, correctionReason: draft.correctionReason, reviewStatus: draft.reviewStatus, followUpStatus: draft.followUpStatus, followUpAssignedTo: draft.followUpAssignedTo, followUpDueDate: draft.followUpDueDate, noteText: draft.noteText, reviewReason: draft.reviewReason, voidReason: draft.voidReason, followUpNote: draft.followUpNote };
+  const ids = { student: "adminStudent", date: "adminDate", teacherCameFrom: "adminTeacher", room: "adminRoom", specialists: "adminSpecialists", timeIn: "adminTimeIn", timeOut: "adminTimeOut", reasons: "adminReasons", interventions: "adminInterventions", scmUsed: "adminScm", notes: "adminNotesSource", returnStatus: "adminReturnStatus", correctionReason: "adminCorrectionReason", reviewStatus: "adminReviewStatus", followUpStatus: "adminFollowUpStatus", followUpAssignedTo: "adminFollowUpAssignedTo", followUpDueDate: "adminFollowUpDueDate", noteText: "adminNoteText", reviewReason: "adminReviewReason", voidReason: "adminVoidReason", followUpNote: "followUpNote" };
+  for (const [key, id] of Object.entries(ids)) {
+    const control = root.querySelector(`#${id}`);
+    if (control && values[key] !== undefined) control.value = values[key];
+  }
 }
 
 function apiBool(value) { return value === true || ["yes", "true", "1"].includes(String(value ?? "").trim().toLowerCase()); }
@@ -141,6 +173,7 @@ document.addEventListener("click", async event => {
       if (!state.demo) {
         await handleProductionAction(action, activeVisit);
         state.mutationError = "";
+        state.editorDraft = null;
         paint();
         return;
       }
@@ -167,9 +200,11 @@ document.addEventListener("click", async event => {
       } else if (action === ADMIN_MUTATION_ACTIONS.RESTORE) {
         state.adminReviews = restoreDemoVisit(state.adminReviews, activeVisit.id, adminContext("Submission restored")); state.mutationError = "";
       }
+      state.editorDraft = null;
       persistDemoSnapshot();
       paint();
     } catch (error) {
+      state.editorDraft = captureEditorDraft();
       state.mutationError = error.message;
       paint();
     }
@@ -184,19 +219,18 @@ document.addEventListener("click", async event => {
     const note = root.querySelector("#followUpNote")?.value ?? "";
     const action = followUpAction.dataset.followUpAction;
     const actor = action === "start-review" ? "Morgan Reed — Behavior Specialist" : "Jordan Ellis — Administrator";
-    try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); persistDemoSnapshot(); paint(); } catch (error) { state.mutationError = error.message; paint(); }
+    try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); state.editorDraft = null; persistDemoSnapshot(); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); }
     return;
   }
-  const close = event.target.closest("[data-close-modal]");
-  if (close) { state.activeVisitId = null; paint(); return; }
+  if (isIntentionalModalDismissal(event.target)) { state.activeVisitId = null; state.editorDraft = null; paint(); return; }
   if (event.target.closest("#resetDemo")) {
     if (!window.confirm("Reset all synthetic demo edits, notes, reviews and follow-up state? This affects only this browser.")) return;
     resetDemoSnapshot(); await loadData(true); return;
   }
   const openVisit = event.target.closest("[data-open-visit]");
-  if (openVisit) { state.activeVisitId = openVisit.dataset.openVisit; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.mutationError = error.message; paint(); } } return; }
+  if (openVisit) { state.activeVisitId = openVisit.dataset.openVisit; state.editorDraft = null; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); } } return; }
   const visit = event.target.closest("[data-visit]");
-  if (visit) { state.activeVisitId = visit.dataset.visit; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.mutationError = error.message; paint(); } } return; }
+  if (visit) { state.activeVisitId = visit.dataset.visit; state.editorDraft = null; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); } } return; }
   const student = event.target.closest("[data-student]");
   if (student && !event.target.closest("a")) { go(`pace/students/${encodeURIComponent(student.dataset.student)}`); return; }
   const sort = event.target.closest("[data-sort]");
@@ -206,6 +240,7 @@ document.addEventListener("click", async event => {
 });
 
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && state.activeVisitId) { state.activeVisitId = null; state.editorDraft = null; paint(); return; }
   const viewport = event.target?.closest?.(".trend-chart-viewport");
   if (!viewport || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
   viewport.scrollLeft += event.key === "ArrowRight" ? 120 : -120;
@@ -214,7 +249,7 @@ document.addEventListener("keydown", event => {
 
 document.addEventListener("change", async event => {
   if (event.target.id === "datePreset" || event.target.id === "rangeFrom" || event.target.id === "rangeTo") {
-    const control = event.target.closest(".date-control"); state.range = rangeFromControls(control, state.range); state.activeVisitId = null; try { await loadData(true); } catch { root.innerHTML = renderError("PACE data could not load", "The date range could not be loaded. Please try again."); } return;
+    const control = event.target.closest(".date-control"); state.range = rangeFromControls(control, state.range); state.activeVisitId = null; state.editorDraft = null; try { await loadData(true); } catch { root.innerHTML = renderError("PACE data could not load", "The date range could not be loaded. Please try again."); } return;
   }
   const filter = event.target.closest("[data-activity-filter]");
   if (filter) { state.activityFilters[filter.dataset.activityFilter] = filter.value; paint(); }
@@ -226,5 +261,5 @@ document.addEventListener("input", event => {
   if (filter && filter.tagName === "INPUT") { state.activityFilters[filter.dataset.activityFilter] = filter.value; paint(); }
 });
 
-window.addEventListener("hashchange", () => { state.activeVisitId = null; paint(); });
+window.addEventListener("hashchange", () => { state.activeVisitId = null; state.editorDraft = null; paint(); });
 boot();

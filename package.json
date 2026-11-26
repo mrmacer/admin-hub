@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
+    "test:browser": "playwright test",
     "start": "node server.js",
     "build": "node scripts/build-env.js",
     "build:demo": "node scripts/build-env.js --env demo",
     "build:production": "node scripts/build-env.js --env production"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1"
   }
 }
