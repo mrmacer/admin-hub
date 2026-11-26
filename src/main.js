@@ -6,11 +6,13 @@ import { renderApp, renderError, renderLoading, renderLogin, renderUnauthorized 
 import { currentRoute, go } from "./router.js";
 import { rangeFromControls } from "./components/date-range.js";
 import { applyFollowUpAction, seedFollowUps } from "./modules/pace/pace-follow-up.js";
+import { normalizeVisit } from "./modules/pace/pace-analytics.js";
 import { ADMIN_MUTATION_ACTIONS, REVIEW_STATUS, addDemoAdminNote, applyDemoEdit, markDemoViewed, recordDemoEdit, restoreDemoVisit, saveDemoReview, seedAdminReviews, voidDemoVisit } from "./modules/pace/pace-admin.js";
+import { ADMIN_API } from "./admin-api.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
-const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, adminReviews: {}, adminReviewsSeeded: false, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, mutationError: "" };
+const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, adminReviews: {}, adminReviewsSeeded: false, adminEtags: {}, production: { apiReady: ADMIN_API.configured, writesEnabled: ADMIN_API.writesEnabled }, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, mutationError: "" };
 
 function paint() { root.innerHTML = renderApp(state); }
 
@@ -40,6 +42,53 @@ function readEditDraft() {
   return { student: value("adminStudent"), date: value("adminDate"), teacherCameFrom: value("adminTeacher"), room: value("adminRoom"), specialists: value("adminSpecialists"), timeIn: value("adminTimeIn"), timeOut: value("adminTimeOut"), reasons: value("adminReasons"), interventions: value("adminInterventions"), scmUsed: root.querySelector("#adminScm")?.value ?? "", notes: value("adminNotesSource"), returnStatus: value("adminReturnStatus") };
 }
 
+function apiBool(value) { return value === true || ["yes", "true", "1"].includes(String(value ?? "").trim().toLowerCase()); }
+
+function apiReviewEntry(visitId, reviewItem, notes = [], audit = []) {
+  const fields = reviewItem?.fields ?? {};
+  const status = { Unreviewed: REVIEW_STATUS.UNREVIEWED, Reviewed: REVIEW_STATUS.REVIEWED, "Needs Follow-Up": REVIEW_STATUS.NEEDS_FOLLOW_UP }[fields.ReviewStatus] ?? REVIEW_STATUS.UNREVIEWED;
+  const followUpStatus = { Open: "open", "In Progress": "in-progress", Resolved: "resolved" }[fields.FollowUpStatus] ?? "open";
+  return { visitId, status, notes: notes.map(item => ({ id: item.id, visitId, text: item.fields?.NoteText ?? "", actor: item.fields?.Actor ?? "", createdAt: item.fields?.CreatedAt ?? "", supersedesNoteId: item.fields?.SupersedesNoteID ?? null })), followUpStatus, followUpAssignedTo: fields.FollowUpAssignedTo ?? "", followUpDueDate: fields.FollowUpDueDate ?? "", isVoided: apiBool(fields.IsVoided), voidReason: fields.VoidReason ?? "", reviewedBy: fields.ReviewedBy ?? null, reviewedAt: fields.ReviewedAt ?? null, sourceVersion: fields.LastReviewedRecordVersion ?? null, version: 1, history: audit.map(item => ({ action: item.fields?.ActionType ?? "Review", actor: item.fields?.Actor ?? "", at: item.fields?.Timestamp ?? "", reason: item.fields?.Reason ?? "" })) };
+}
+
+function applyProductionSnapshot(snapshot, history = {}) {
+  if (!snapshot?.source?.id) return;
+  const source = { id: snapshot.source.id, ...(snapshot.source.fields ?? {}) };
+  const visit = normalizeVisit(source);
+  state.visits = state.visits.map(item => item.id === visit.id ? visit : item);
+  state.adminEtags[visit.id] = snapshot.source.etag ?? state.adminEtags[visit.id] ?? null;
+  state.adminReviews[visit.id] = apiReviewEntry(visit.id, snapshot.review, history.notes ?? snapshot.notes ?? [], history.audit ?? []);
+}
+
+async function hydrateProductionVisit(visitId) {
+  if (state.demo || !ADMIN_API.configured) return;
+  const [snapshot, history] = await Promise.all([ADMIN_API.getVisit(visitId), ADMIN_API.getHistory(visitId)]);
+  applyProductionSnapshot(snapshot, history);
+}
+
+async function handleProductionAction(action, activeVisit) {
+  if (!ADMIN_API.writesEnabled) throw new Error("Production administrative writes are disabled pending approved infrastructure configuration.");
+  const visitId = activeVisit.id;
+  if (!state.adminEtags[visitId]) await hydrateProductionVisit(visitId);
+  if (action === ADMIN_MUTATION_ACTIONS.EDIT) {
+    const draft = readEditDraft();
+    draft.scmUsed = draft.scmUsed === "" ? null : draft.scmUsed === "true";
+    await ADMIN_API.edit(visitId, { changes: draft, correctionReason: root.querySelector("#adminCorrectionReason")?.value ?? "", expectedEtag: state.adminEtags[visitId] });
+  } else if (action === ADMIN_MUTATION_ACTIONS.REVIEW) {
+    const status = root.querySelector("#adminReviewStatus")?.value ?? REVIEW_STATUS.UNREVIEWED;
+    const followUpStatus = root.querySelector("#adminFollowUpStatus")?.value ?? "open";
+    const reviewStatus = { [REVIEW_STATUS.UNREVIEWED]: "Unreviewed", [REVIEW_STATUS.REVIEWED]: "Reviewed", [REVIEW_STATUS.NEEDS_FOLLOW_UP]: "Needs Follow-Up" }[status] ?? "Unreviewed";
+    const graphFollowUpStatus = { open: "Open", "in-progress": "In Progress", resolved: "Resolved" }[followUpStatus] ?? "Open";
+    await ADMIN_API.saveReview(visitId, { reviewStatus, followUpNeeded: status === REVIEW_STATUS.NEEDS_FOLLOW_UP, followUpStatus: graphFollowUpStatus, followUpAssignedTo: root.querySelector("#adminFollowUpAssignedTo")?.value ?? "", followUpDueDate: root.querySelector("#adminFollowUpDueDate")?.value ?? "", reason: root.querySelector("#adminReviewReason")?.value ?? "" });
+  } else if (action === ADMIN_MUTATION_ACTIONS.MARK_VIEWED) await ADMIN_API.markViewed(visitId);
+  else if (action === ADMIN_MUTATION_ACTIONS.ADD_NOTE) await ADMIN_API.addNote(visitId, root.querySelector("#adminNoteText")?.value ?? "");
+  else if (action === ADMIN_MUTATION_ACTIONS.VOID) {
+    if (!window.confirm("Void this production submission? The original SharePoint record will remain intact.")) return;
+    await ADMIN_API.voidVisit(visitId, root.querySelector("#adminVoidReason")?.value ?? "");
+  } else if (action === ADMIN_MUTATION_ACTIONS.RESTORE) await ADMIN_API.restoreVisit(visitId);
+  await hydrateProductionVisit(visitId);
+}
+
 async function boot() {
   root.innerHTML = renderLoading();
   try {
@@ -63,13 +112,19 @@ async function boot() {
   }
 }
 
-document.addEventListener("click", event => {
+document.addEventListener("click", async event => {
   const adminAction = event.target.closest("[data-admin-action]");
   if (adminAction) {
     const activeVisit = state.visits.find(item => item.id === state.activeVisitId);
     if (!activeVisit) return;
     const action = adminAction.dataset.adminAction;
     try {
+      if (!state.demo) {
+        await handleProductionAction(action, activeVisit);
+        state.mutationError = "";
+        paint();
+        return;
+      }
       if (!state.demo && !PRODUCTION_ADMIN_WRITES_ENABLED) throw new Error("Production administrative writes are disabled pending approval.");
       if (action === ADMIN_MUTATION_ACTIONS.EDIT) {
         const reason = root.querySelector("#adminCorrectionReason")?.value ?? "";
@@ -115,9 +170,9 @@ document.addEventListener("click", event => {
   const close = event.target.closest("[data-close-modal]");
   if (close) { state.activeVisitId = null; paint(); return; }
   const openVisit = event.target.closest("[data-open-visit]");
-  if (openVisit) { state.activeVisitId = openVisit.dataset.openVisit; paint(); return; }
+  if (openVisit) { state.activeVisitId = openVisit.dataset.openVisit; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.mutationError = error.message; paint(); } } return; }
   const visit = event.target.closest("[data-visit]");
-  if (visit) { state.activeVisitId = visit.dataset.visit; paint(); return; }
+  if (visit) { state.activeVisitId = visit.dataset.visit; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.mutationError = error.message; paint(); } } return; }
   const student = event.target.closest("[data-student]");
   if (student && !event.target.closest("a")) { go(`pace/students/${encodeURIComponent(student.dataset.student)}`); return; }
   const sort = event.target.closest("[data-sort]");

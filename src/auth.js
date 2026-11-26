@@ -21,12 +21,19 @@ export const AUTH = {
   get isAuthenticated() { return APP_ENV === "production" && Boolean(this.account && this.staff); },
   get displayName() { return this.account?.name || this.account?.username || ""; },
   get email() { return this.account?.username ?? "demo@example.invalid"; },
+  async acquireApiToken() {
+    if (APP_ENV !== "production") throw new Error("Protected API access is disabled outside production.");
+    if (!CONFIG.api.scope) throw new Error("The protected Admin Hub API is not configured for this build.");
+    if (!this.client || !this.account) throw new Error("You are not signed in.");
+    const response = await this.client.acquireTokenSilent({ scopes: [CONFIG.api.scope], account: this.account });
+    return response.accessToken;
+  },
   async acquireGraphToken() {
     if (APP_ENV !== "production") throw new Error("Microsoft Graph access is disabled outside production.");
     if (!this.client || !this.account) throw new Error("You are not signed in.");
     const response = await this.client.acquireTokenSilent({ scopes: CONFIG.auth.scopes, account: this.account });
     return response.accessToken;
   },
-  login() { if (APP_ENV === "production") this.client?.loginRedirect({ scopes: CONFIG.auth.scopes }); },
+  login() { if (APP_ENV === "production") this.client?.loginRedirect({ scopes: [...new Set([...CONFIG.auth.scopes, ...(CONFIG.api.scope ? [CONFIG.api.scope] : [])])] }); },
   logout() { if (APP_ENV === "production" && this.client && this.account) return this.client.logoutRedirect({ account: this.account, postLogoutRedirectUri: window.location.origin }); }
 };

@@ -86,6 +86,7 @@ Use one row per administrative operation. `OperationId` must be unique and index
 | --- | --- | --- | --- | --- |
 | PACEVisitItemID | Single line of text | Yes | — | Indexed |
 | OperationId | Single line of text | Yes | — | Indexed and enforce unique values |
+| OperationStatus | Choice | Yes | Attempted | Attempted; Succeeded; Conflicted; Failed; Uncertain |
 | ActionType | Choice | Yes | Edit | Edit; Review; Void; Restore |
 | Actor | Single line of text | Yes | — | Authenticated administrator identity |
 | Timestamp | Date and Time | Yes | — | — |
@@ -104,12 +105,15 @@ Native PACE version history is the first preservation layer. Graph supports read
 The administrative workflow must:
 
 1. Read the current source item and ETag.
-2. Send only changed source fields.
-3. Re-read and verify the saved fields.
-4. Write review metadata, append-only note rows when requested, and an audit
-   event using the same operation ID.
-5. Report partial completion if the separate list writes do not all succeed.
-6. Permit a retry with the same operation ID; duplicate audit events must be detected.
+2. Persist and re-read an `Attempted` audit preservation event containing the
+   original values, intended values, actor, reason, timestamp, and operation ID.
+3. Refuse the source PATCH if preservation cannot be confirmed.
+4. Send only changed source fields with `If-Match`.
+5. Re-read and verify the saved fields.
+6. Write review metadata and append-only note rows when requested, then update
+   the preservation event with the actual outcome.
+7. Report partial completion if the separate list writes do not all succeed.
+8. Permit a retry with the same operation ID; duplicate audit events must be detected.
 
 There is no atomic transaction across the PACE, review, notes, and audit lists.
 A partial-operation error is therefore a normal recoverable state, not a
@@ -121,7 +125,12 @@ successful save.
 
 Use a small server-side API or function for production mutations. Keep Microsoft Graph credentials and any application secret out of browser code. The API should validate the signed-in administrator, apply the Admin Hub allowlist, enforce the write gate, perform ETag-protected updates, append running notes without update/delete operations, and write review/audit records.
 
-For the service identity, evaluate Microsoft Graph selected-resource permissions such as `Sites.Selected` or the newer list-scoped `Lists.SelectedOperations.Selected`, assigned only to the required SharePoint resources. Microsoft documents that selected permissions require explicit resource assignment and do not automatically grant access. The API must still enforce user authorization because app-only access has no end-user identity.
+For the service identity, use the least-privileged Microsoft Graph application
+permission `Lists.SelectedOperations.Selected`, assigned only to the six
+required SharePoint lists. Microsoft documents that selected permissions
+require explicit resource assignment and do not automatically grant access.
+The API must still enforce user authorization because app-only access has no
+end-user identity.
 
 ### Delegated browser alternative
 

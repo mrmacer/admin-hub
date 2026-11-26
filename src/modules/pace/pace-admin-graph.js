@@ -29,6 +29,7 @@ export const REVIEW_LIST_SCHEMA = {
 export const AUDIT_LIST_SCHEMA = {
   PACEVisitItemID: { type: "Text", required: true, default: "", indexed: true },
   OperationId: { type: "Text", required: true, default: "", indexed: true, unique: true },
+  OperationStatus: { type: "Choice", required: true, default: "Attempted", choices: ["Attempted", "Succeeded", "Conflicted", "Failed", "Uncertain"] },
   ActionType: { type: "Choice", required: true, default: "Edit", choices: ["Edit", "Review", "Void", "Restore"] },
   Actor: { type: "Text", required: true, default: "" },
   Timestamp: { type: "DateTime", required: true, default: null },
@@ -125,18 +126,30 @@ function sameValue(left, right) { return JSON.stringify(left ?? null) === JSON.s
 
 function valuesAlreadyApplied(item, values) { return Object.entries(values).every(([displayName, value]) => sameValue(item.fields[displayName], value)); }
 
+function parseJson(value, fallback = null) {
+  try { return JSON.parse(String(value ?? "")); } catch { return fallback; }
+}
+
+function outcomeForError(error) {
+  if (error?.code === "STALE_RECORD" || Number(error?.status) === 409 || Number(error?.status) === 412) return "Conflicted";
+  if (error?.code === "GRAPH_REQUEST_FAILED" && Number(error?.status) >= 500) return "Uncertain";
+  if (error?.code === "SAVE_VERIFICATION_FAILED") return "Uncertain";
+  if (error?.name === "TypeError" || error?.code === "NETWORK_ERROR") return "Uncertain";
+  return "Failed";
+}
+
 function graphClientRequest(client, method, path, options = {}) {
   if (typeof client.request === "function") return client.request(method, path, options);
   if (method === "GET" && typeof client.get === "function") return client.get(path, options.headers ?? {});
   throw new AdminAdapterError(`The Graph client cannot perform ${method} requests.`, "GRAPH_CLIENT_UNSUPPORTED");
 }
 
-export function createPaceAdminGraphAdapter({ graphClient, writeEnabled = false, authorized: isAuthorized = false, environment = "production", testMode = false } = {}) {
+export function createPaceAdminGraphAdapter({ graphClient, writeEnabled = false, productionWritesEnabled = PRODUCTION_ADMIN_WRITES_ENABLED, authorized: isAuthorized = false, environment = "production", testMode = false } = {}) {
   if (!graphClient) throw new AdminAdapterError("A Graph client is required.", "GRAPH_CLIENT_MISSING");
 
   const mutationGate = () => {
     if (environment !== "production" && !testMode) throw new AdminAdapterError("Production adapter cannot run outside production.", "ENVIRONMENT_BLOCKED");
-    if (!writeEnabled || (!PRODUCTION_ADMIN_WRITES_ENABLED && !testMode)) throw new AdminAdapterError("Production administrative writes are disabled pending approval.", "WRITE_GATE_CLOSED");
+    if (!writeEnabled || (!productionWritesEnabled && !testMode)) throw new AdminAdapterError("Production administrative writes are disabled pending approval.", "WRITE_GATE_CLOSED");
     authorized({ authorized: isAuthorized, actor: "adapter" });
   };
 
@@ -156,6 +169,18 @@ export function createPaceAdminGraphAdapter({ graphClient, writeEnabled = false,
     const { siteId, listId, schema } = await resource(listName);
     const item = await graphClientRequest(graphClient, "GET", `sites/${siteId}/lists/${listId}/items/${encodeURIComponent(itemId)}?$expand=fields`);
     return { ...itemShape(item, schema), schema, siteId, listId };
+  };
+
+  const auditResource = async () => {
+    const target = await resource(ADMIN_LISTS.audit);
+    for (const displayName of Object.keys(AUDIT_LIST_SCHEMA)) findInternal(target.schema, displayName);
+    return target;
+  };
+
+  const getAuditByOperation = async suppliedOperationId => {
+    const result = await listItems(ADMIN_LISTS.audit, { displayName: "OperationId", value: suppliedOperationId });
+    if (result.items.length > 1) throw new AdminAdapterError("Duplicate audit entries exist for this operation.", "DUPLICATE_AUDIT_EVENT", { operationId: suppliedOperationId });
+    return result.items[0] ? { ...itemShape(result.items[0], result.schema), schema: result.schema, siteId: result.siteId, listId: result.listId } : null;
   };
 
   const getReview = async visitId => {
@@ -194,11 +219,23 @@ export function createPaceAdminGraphAdapter({ graphClient, writeEnabled = false,
   };
 
   const appendAudit = async event => {
-    mutationGate(); const existing = await listItems(ADMIN_LISTS.audit, { displayName: "OperationId", value: event.operationId });
-    if (existing.items.length > 1) throw new AdminAdapterError("Duplicate audit entries exist for this operation.", "DUPLICATE_AUDIT_EVENT", { operationId: event.operationId });
-    if (existing.items.length === 1) return { duplicate: true, item: itemShape(existing.items[0], existing.schema) };
-    const target = await resource(ADMIN_LISTS.audit); const values = { PACEVisitItemID: String(event.visitId), OperationId: event.operationId, ActionType: event.action, Actor: event.actor, Timestamp: event.timestamp, ChangedFields: json(event.changedFields), PreviousValues: json(event.previousValues), NewValues: json(event.newValues), Reason: event.reason ?? "", SourceRecordVersion: event.sourceRecordVersion ?? "" };
-    const item = await createItem(ADMIN_LISTS.audit, target.schema, target.siteId, target.listId, values); return { duplicate: false, item: itemShape(item, target.schema) };
+    mutationGate(); const existing = await getAuditByOperation(event.operationId);
+    if (existing) return { duplicate: true, item: existing };
+    const target = await auditResource(); const values = { PACEVisitItemID: String(event.visitId), OperationId: event.operationId, OperationStatus: event.operationStatus ?? "Succeeded", ActionType: event.action, Actor: event.actor, Timestamp: event.timestamp, ChangedFields: json(event.changedFields), PreviousValues: json(event.previousValues), NewValues: json(event.newValues), Reason: event.reason ?? "", SourceRecordVersion: event.sourceRecordVersion ?? "" };
+    const item = await createItem(ADMIN_LISTS.audit, target.schema, target.siteId, target.listId, values);
+    const persisted = await getAuditByOperation(event.operationId);
+    if (!persisted) throw new AdminAdapterError("The preservation record could not be found after creation.", "PRESERVATION_VERIFICATION_FAILED", { operationId: event.operationId });
+    return { duplicate: false, item: persisted ?? { ...itemShape(item, target.schema), schema: target.schema, siteId: target.siteId, listId: target.listId } };
+  };
+
+  const updateAuditOutcome = async (audit, operationStatus, sourceRecordVersion = undefined) => {
+    if (!audit) throw new AdminAdapterError("The preservation record is unavailable.", "PRESERVATION_RECORD_MISSING");
+    const values = { OperationStatus: operationStatus };
+    if (sourceRecordVersion !== undefined) values.SourceRecordVersion = sourceRecordVersion;
+    await writeItemFields(ADMIN_LISTS.audit, audit, audit.schema, values, audit.etag);
+    const verified = await getItem(ADMIN_LISTS.audit, audit.id);
+    if (verified.fields.OperationStatus !== operationStatus) throw new AdminAdapterError("The preservation outcome could not be verified.", "PRESERVATION_VERIFICATION_FAILED", { operationId: audit.fields.OperationId, operationStatus });
+    return verified;
   };
 
   const listAdminNotes = async visitId => {
@@ -238,24 +275,90 @@ export function createPaceAdminGraphAdapter({ graphClient, writeEnabled = false,
     return { item: verified, changed, previousValues, response };
   };
 
+  const verifyAuditReady = async () => { mutationGate(); await auditResource(); return true; };
+
+  const preserveBeforeSourceChange = async ({ visitId, current, changedValues, previousValues, actor, correctionReason, operationId: op, timestamp, expectedEtag }) => {
+    const intended = { ...changedValues };
+    let audit = await getAuditByOperation(op);
+    if (!audit) {
+      const created = await appendAudit({ visitId, operationId: op, operationStatus: "Attempted", action: "Edit", actor, timestamp, changedFields: Object.keys(intended), previousValues, newValues: intended, reason: correctionReason, sourceRecordVersion: current.etag });
+      audit = created.item;
+      const fields = audit.fields;
+      const verified = String(fields.PACEVisitItemID) === String(visitId)
+        && String(fields.OperationId) === String(op)
+        && fields.OperationStatus === "Attempted"
+        && fields.ActionType === "Edit"
+        && String(fields.Actor) === String(actor)
+        && sameValue(parseJson(fields.ChangedFields, []), Object.keys(intended))
+        && sameValue(parseJson(fields.PreviousValues, {}), previousValues)
+        && sameValue(parseJson(fields.NewValues, {}), intended)
+        && String(fields.Reason ?? "") === String(correctionReason)
+        && String(fields.SourceRecordVersion ?? "") === String(current.etag ?? "");
+      if (!verified) throw new AdminAdapterError("The preservation record could not be verified before the source mutation.", "PRESERVATION_VERIFICATION_FAILED", { operationId: op });
+    } else {
+      const fields = audit.fields;
+      const matches = String(fields.PACEVisitItemID) === String(visitId)
+        && fields.ActionType === "Edit"
+        && String(fields.Actor) === String(actor)
+        && sameValue(parseJson(fields.ChangedFields, []), Object.keys(intended))
+        && sameValue(parseJson(fields.NewValues, {}), intended)
+        && String(fields.Reason ?? "") === String(correctionReason);
+      if (!matches) throw new AdminAdapterError("The operation ID is already used for a different correction.", "DUPLICATE_OPERATION", { operationId: op });
+      if (fields.OperationStatus === "Succeeded") return { audit, intended, sourceVersion: String(fields.SourceRecordVersion ?? current.etag ?? "") };
+    }
+    if (expectedEtag && current.etag !== expectedEtag && !valuesAlreadyApplied(current, intended)) {
+      audit = await updateAuditOutcome(audit, "Conflicted", current.etag);
+      throw new AdminAdapterError("The PACE record changed before the correction could begin.", "STALE_RECORD", { operationId: op, expectedEtag, actualEtag: current.etag, operationStatus: "Conflicted" });
+    }
+    return { audit, intended, sourceVersion: String(audit.fields.SourceRecordVersion ?? current.etag ?? "") };
+  };
+
   const saveAdministrativeChange = async ({ visitId, changes = {}, review = {}, actor: actorName, correctionReason = "", expectedEtag, operationId: suppliedOperationId, timestamp = new Date().toISOString() } = {}) => {
     const op = operationId(suppliedOperationId); const administrator = authorized({ authorized: isAuthorized, actor: actorName }); mutationGate();
-    const completed = []; let sourceVersion = expectedEtag ?? ""; let paceResult = null;
+    const completed = []; let sourceVersion = expectedEtag ?? ""; let paceResult = null; let auditResult = null;
     try {
-      try {
-        paceResult = await updatePaceFields(visitId, changes, { expectedEtag });
-      } catch (error) {
-        if (error.code !== "STALE_RECORD") throw error;
-        const current = await readPaceItem(visitId); const values = graphPaceValues(changes);
-        if (!valuesAlreadyApplied(current, values)) throw error;
-        paceResult = { item: current, changed: Object.keys(values), alreadyApplied: true };
+      await verifyAuditReady();
+      const current = await readPaceItem(visitId);
+      const intended = graphPaceValues(changes);
+      const changed = Object.keys(intended);
+      const previousValues = Object.fromEntries(changed.map(displayName => [displayName, current.fields[displayName] ?? null]));
+      const preservation = await preserveBeforeSourceChange({ visitId, current, changedValues: intended, previousValues, actor: administrator, correctionReason, operationId: op, timestamp, expectedEtag });
+      auditResult = preservation.audit;
+      completed.push("preservation");
+      if (auditResult.fields.OperationStatus === "Succeeded" && !valuesAlreadyApplied(current, intended)) throw new AdminAdapterError("A completed operation would overwrite a newer correction.", "DUPLICATE_OPERATION", { operationId: op });
+      if (valuesAlreadyApplied(current, intended)) {
+        const verifiedAudit = auditResult.fields.OperationStatus === "Succeeded" ? auditResult : await updateAuditOutcome(auditResult, "Succeeded", current.etag);
+        paceResult = { item: current, changed, previousValues, alreadyApplied: true }; completed.push("pace"); auditResult = verifiedAudit; completed.push("audit");
+      } else {
+        if (current.etag !== preservation.sourceVersion) {
+          auditResult = await updateAuditOutcome(auditResult, "Conflicted", current.etag);
+          throw new AdminAdapterError("The PACE record changed after preservation and was not modified.", "STALE_RECORD", { operationId: op, operationStatus: "Conflicted" });
+        }
+        try {
+          paceResult = await updatePaceFields(visitId, changes, { expectedEtag: preservation.sourceVersion });
+        } catch (error) {
+          const latest = await readPaceItem(visitId).catch(() => null);
+          if (latest && valuesAlreadyApplied(latest, intended)) {
+            paceResult = { item: latest, changed, previousValues, alreadyApplied: true };
+          } else {
+            const outcome = outcomeForError(error);
+            try { auditResult = await updateAuditOutcome(auditResult, outcome, preservation.sourceVersion); }
+            catch (outcomeError) { throw new PartialAdminOperationError("The source outcome could not be recorded safely; investigate before retrying.", { operationId: op, completed, failedStage: "audit-outcome", operationStatus: "Uncertain", cause: outcomeError.message }); }
+            error.details = { ...(error.details ?? {}), operationId: op, operationStatus: outcome };
+            throw error;
+          }
+        }
+        completed.push("pace");
+        try { auditResult = await updateAuditOutcome(auditResult, "Succeeded", paceResult.item.etag); }
+        catch (error) { throw new PartialAdminOperationError("The source correction completed but its preservation outcome is uncertain.", { operationId: op, completed, failedStage: "audit-outcome", operationStatus: "Uncertain", cause: error.message }); }
+        completed.push("audit");
       }
-      sourceVersion = paceResult.item.etag ?? sourceVersion; completed.push("pace");
+      sourceVersion = paceResult.item.etag ?? sourceVersion;
       const reviewResult = await upsertReview(visitId, { ...review, reviewedBy: administrator, reviewedAt: timestamp, operationId: op }, sourceVersion); completed.push("review");
-      const auditResult = await appendAudit({ visitId, operationId: op, action: "Edit", actor: administrator, timestamp, changedFields: paceResult.changed, previousValues: paceResult.previousValues ?? {}, newValues: changes, reason: correctionReason, sourceRecordVersion: sourceVersion }); completed.push("audit");
       return { operationId: op, paceResult, reviewResult, auditResult, completed };
     } catch (error) {
-      if (completed.length) throw new PartialAdminOperationError("The operation partially completed; retry with the same operation ID after reviewing the completed stages.", { operationId: op, completed, failedStage: completed.includes("review") ? "audit" : completed.includes("pace") ? "review" : "pace", cause: error.message });
+      if (error instanceof PartialAdminOperationError || error.details?.operationStatus) throw error;
+      if (completed.length && error.code !== "STALE_RECORD" && error.code !== "DUPLICATE_OPERATION") throw new PartialAdminOperationError("The operation partially completed; retry with the same operation ID after reviewing the completed stages.", { operationId: op, completed, failedStage: completed.includes("review") ? "review" : completed.includes("pace") ? "review" : "preservation", cause: error.message });
       throw error;
     }
   };
@@ -278,5 +381,5 @@ export function createPaceAdminGraphAdapter({ graphClient, writeEnabled = false,
     return { operationId: op, reviewResult, auditResult };
   };
 
-  return { getReview, listAdminNotes, listAuditHistory, appendAdminNote, readPaceItem, updatePaceFields, saveAdministrativeChange, saveReview, voidOrRestore, appendAudit, mutationGate };
+  return { getReview, listAdminNotes, listAuditHistory, appendAdminNote, readPaceItem, updatePaceFields, saveAdministrativeChange, saveReview, voidOrRestore, appendAudit, verifyAuditReady, mutationGate };
 }

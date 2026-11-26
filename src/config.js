@@ -1,11 +1,12 @@
 import { APP_ENV, IS_DEMO } from "./environment.js";
+import { API_AUDIENCE as GENERATED_API_AUDIENCE, API_SCOPE as GENERATED_API_SCOPE, WRITE_ENABLED as GENERATED_WRITE_ENABLED } from "./generated-environment.js";
 
 export { APP_ENV };
 export const APP_MODE = APP_ENV;
 export const DEFAULT_PACE_RANGE_PRESET = "30";
 // Production writes remain disabled until approved Graph permissions, review
 // storage, and record-preservation controls have been verified.
-export const PRODUCTION_ADMIN_WRITES_ENABLED = false;
+export const PRODUCTION_ADMIN_WRITES_ENABLED = GENERATED_WRITE_ENABLED === true;
 
 export const CONFIG = {
   appName: "Admin Hub",
@@ -17,11 +18,16 @@ export const CONFIG = {
     authority: "https://login.microsoftonline.com/3276761c-22db-462b-a930-172d155bd795",
     scopes: ["User.Read", "Sites.Read.All"]
   },
+  api: {
+    basePath: "/api/admin/pace",
+    audience: GENERATED_API_AUDIENCE,
+    scope: GENERATED_API_SCOPE
+  },
   demoStorageKey: "adminHubPaceDemoData",
   authorization: {
-    enforceExplicitFlag: false,
-    adminHubFields: ["Admin Hub", "Admin Hub Access", "AdminHub", "adminHub"],
-    paceDashboardFields: ["PACE Dashboard", "PACE Dashboard Access", "Pace Dashboard"],
+    enforceExplicitFlag: true,
+    adminHubFields: ["AdminHubAccess"],
+    paceDashboardFields: [],
     // This is intentionally not an authorization field. Admin Panel is a MAC
     // permission and must never silently grant Admin Hub access.
     excludedLegacyFields: ["Admin Panel"]

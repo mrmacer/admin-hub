@@ -78,6 +78,7 @@ SharePoint list permissions alone are not immutable audit protection.
 | --- | --- | --- | --- | --- |
 | `PACEVisitItemID` / `PACEVisitItemID` | Single line of text | Yes | Blank | Indexed |
 | `OperationId` / `OperationId` | Single line of text | Yes | Blank | Indexed, unique |
+| `OperationStatus` / `OperationStatus` | Choice | Yes | `Attempted` | `Attempted`, `Succeeded`, `Conflicted`, `Failed`, `Uncertain` |
 | `ActionType` / `ActionType` | Choice | Yes | `Edit` | `Edit`, `Review`, `Void`, `Restore` |
 | `Actor` / `Actor` | Single line of text | Yes | Blank | Authenticated UPN |
 | `Timestamp` / `Timestamp` | Date and Time | Yes | Blank | — |
@@ -112,10 +113,11 @@ body.
    code must not hold Graph application credentials or secrets.
 2. Validate the signed-in Entra token for the expected tenant, issuer, and
    audience, then apply the explicit Admin Hub administrator allowlist.
-3. Prefer application permission limited to the required SharePoint resource,
-   such as `Sites.Selected` or an approved list-scoped selected permission.
-   The Entra administrator must assign the resource explicitly; consent alone
-   is not sufficient. Do not add broad tenant-wide write permission by default.
+3. Use the least-privileged application permission
+   `Lists.SelectedOperations.Selected` for the six fixed lists, or obtain
+   explicit security approval for an equivalent selected-resource arrangement.
+   The Entra administrator must assign each list explicitly; consent alone is
+   not sufficient. Do not add broad tenant-wide write permission.
 4. Bind the service to the fixed site and three fixed administrative lists plus
    the existing `IEP_Pace_Visits` list. Do not accept list IDs from callers.
 5. Keep the production write gate closed until the review-only pilot passes.

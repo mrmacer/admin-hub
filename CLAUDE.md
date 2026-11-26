@@ -45,7 +45,13 @@ Vercel project ID, and build command before deployment.
 - Administrative editing of existing `IEP_Pace_Visits` submissions is the
   primary v1.1 release requirement, but production writes remain disabled until
   the protected service, permissions, note storage, audit protection, and
-  preservation controls are approved and verified.
+  preservation controls are approved and verified. Source corrections require
+  the `OperationStatus` lifecycle column documented in the protected API guide;
+  the adapter fails closed until it is present.
+- The protected API entry point is `api/admin/pace/[...path].js`. Its runtime
+  contract, selected-resource requirements, explicit `AdminHubAccess`
+  authorization, and fail-closed write gates are documented in
+  [`docs/PROTECTED_API_CONFIGURATION.md`](docs/PROTECTED_API_CONFIGURATION.md).
 - Never create replacement PACE records or issue a Graph `DELETE` for a PACE
   submission. Source corrections must PATCH the existing item ID.
 - Never commit credentials, tokens, `.env` files, or generated production

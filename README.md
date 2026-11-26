@@ -20,28 +20,28 @@ Safely reused from PACE Room Tracker and MAC-Walkthrough:
 - Graph pagination with stable SharePoint item IDs.
 
 Intentionally excluded: MAC intelligence, Daily Pulse, Living IEP logic,
-Melissa-specific workflows, setup tools, reports, exports, and any PACE write,
-edit, or delete operation.
+Melissa-specific workflows, setup tools, reports, exports, and direct
+browser-side PACE write or delete operations. Approved production corrections
+must cross the protected server API described below; its write gate remains
+closed in the checked-in build.
 
 ## Authorization design
 
-`IEP_App_Users` is the intended authorization source. V1 looks for these future
-display columns in order:
+`IEP_App_Users` is the authorization source. Production access requires the
+explicit `AdminHubAccess` Yes/No field and an active matching identity in
+`IEP_Users2`. The temporary Administrator-role fallback has been removed.
 
-- `Admin Hub`
-- `PACE Dashboard`
-
-Recommended future access columns to add manually, after review:
+Required access column:
 
 | Column | Type | Purpose |
 | --- | --- | --- |
-| `Admin Hub` | Yes/No | Access to the shared administrative shell |
-| `PACE Dashboard` | Yes/No | Access to the PACE module |
-The app does not create or modify SharePoint columns. Until an explicit Admin
-Hub or PACE Dashboard column exists, a temporary migration fallback permits an
-active `IEP_Users2` administrator. `Admin Panel` is never read as a grant and
-is not a migration fallback. Set `CONFIG.authorization.enforceExplicitFlag`
-to a stricter policy during the authorization cutover if desired.
+| `AdminHubAccess` | Yes/No, default No | Explicit access to the protected Admin Hub API and PACE administrative workflow |
+
+The app does not create or modify SharePoint columns. Administrators and Lead
+BIs are eligible only when IT explicitly grants this field. `PACE` and
+`Admin Panel` are never read as Admin Hub grants. See
+[`docs/PROTECTED_API_CONFIGURATION.md`](docs/PROTECTED_API_CONFIGURATION.md)
+for the server/API configuration handoff.
 
 For a future production follow-up workflow, consider a separate permission
 such as `PACE Follow-Up` with Manage access. Do not modify `IEP_App_Users` as
@@ -50,7 +50,7 @@ part of the demo experiment.
 ## Application structure
 
 ```text
-index.html / styles.css / server.js
+index.html / styles.css / server.js / api/admin/pace/[...path].js
 src/
   config.js              Entra, SharePoint, module, and field configuration
   auth.js                Existing MSAL identity pattern
@@ -65,6 +65,11 @@ src/
     pace-analytics.js    Pure normalization and aggregation functions
     pace-follow-up.js    Separate synthetic review-state model
     pace-views.js        Overview, students, detail, and activity UI
+  server/
+    handler.js           Vercel-compatible protected API boundary
+    entra.js             Entra JWT and server Graph-token validation
+    authorization.js     Explicit AdminHubAccess resolution
+    graph-client.js      Fixed-resource app-only Graph client
 test/                    Node built-in test suite
 ```
 

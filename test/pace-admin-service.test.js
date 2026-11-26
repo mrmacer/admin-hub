@@ -7,15 +7,16 @@ const schemas = {
   IEP_Pace_Visits: Object.fromEntries(["Student", "Date", "Teacher Came From", "Room", "Behavior Specialist", "Time In", "Time Out", "Reason", "Intervention Used", "SCM", "Notes", "Duration", "Return Status"].map(name => [name, `pace_${name.replaceAll(" ", "_")}`])),
   IEP_Pace_Admin_Reviews: Object.fromEntries(["PACEVisitItemID", "ReviewStatus", "ReviewedBy", "ReviewedAt", "FollowUpNeeded", "FollowUpStatus", "FollowUpAssignedTo", "FollowUpDueDate", "IsVoided", "VoidReason", "VoidedBy", "VoidedAt", "RestoredBy", "RestoredAt", "LastReviewedRecordVersion", "LastOperationId"].map(name => [name, `review_${name.replaceAll(" ", "_")}`])),
   IEP_Pace_Admin_Notes: Object.fromEntries(["NoteID", "PACEVisitItemID", "NoteText", "Actor", "CreatedAt", "SupersedesNoteID", "OperationId"].map(name => [name, `note_${name.replaceAll(" ", "_")}`])),
-  IEP_Pace_Admin_Audit: Object.fromEntries(["PACEVisitItemID", "OperationId", "ActionType", "Actor", "Timestamp", "ChangedFields", "PreviousValues", "NewValues", "Reason", "SourceRecordVersion"].map(name => [name, `audit_${name.replaceAll(" ", "_")}`]))
+  IEP_Pace_Admin_Audit: Object.fromEntries(["PACEVisitItemID", "OperationId", "OperationStatus", "ActionType", "Actor", "Timestamp", "ChangedFields", "PreviousValues", "NewValues", "Reason", "SourceRecordVersion"].map(name => [name, `audit_${name.replaceAll(" ", "_")}`]))
 };
 
 const clone = value => structuredClone(value);
 
-function createMockGraph({ failAudit = false } = {}) {
+function createMockGraph({ failAudit = false, failAuditOutcome = false } = {}) {
   const calls = [];
   let sequence = 10;
   let shouldFailAudit = failAudit;
+  let shouldFailAuditOutcome = failAuditOutcome;
   const lists = {
     pace: { id: "pace-1", items: { "42": { id: "42", "@odata.etag": 'W/"1"', fields: { pace_Student: "Synthetic Student", pace_Date: "2026-11-25", pace_Teacher_Came_From: "Synthetic Classroom", pace_Room: "PACE Room 1", pace_Behavior_Specialist: ["Synthetic Specialist"], pace_Time_In: "08:00", pace_Time_Out: "08:20", pace_Reason: ["Break request"], pace_Intervention_Used: ["Calm space"], pace_SCM: false, pace_Notes: "Original synthetic note.", pace_Duration: 20, pace_Return_Status: "Returned" } } } },
     reviews: { id: "reviews-1", items: {} },
@@ -49,6 +50,7 @@ function createMockGraph({ failAudit = false } = {}) {
       if (method === "PATCH" && path.endsWith("/fields")) {
         const itemId = decodeURIComponent(path.split("/items/")[1].split("/")[0]);
         const item = list.items[itemId];
+        if (shouldFailAuditOutcome && list.id === "audit-1") throw new Error("Synthetic audit outcome failure");
         if (options.headers?.["If-Match"] && options.headers["If-Match"] !== item["@odata.etag"]) throw new Error("412 Precondition Failed");
         Object.assign(item.fields, clone(options.body));
         item["@odata.etag"] = `W/"${Number(item["@odata.etag"].match(/\d+/)?.[0] ?? 1) + 1}"`;
@@ -58,6 +60,7 @@ function createMockGraph({ failAudit = false } = {}) {
     }
   };
   mock.setFailAudit = value => { shouldFailAudit = value; };
+  mock.setFailAuditOutcome = value => { shouldFailAuditOutcome = value; };
   return mock;
 }
 
@@ -93,7 +96,7 @@ test("service rejects body-supplied identity/list controls and edits only allowl
   assert.equal(result.body.paceResult.item.id, "42");
   assert.equal(result.body.paceResult.item.fields.Duration, 35);
   assert.equal(result.body.reviewResult.fields.ReviewStatus, "Reviewed");
-  assert.equal(result.body.auditResult.item.fields.Actor, "admin@iu29.org");
+  assert.equal(result.body.auditResult.fields.Actor, "admin@iu29.org");
   const patch = graph.calls.find(call => call.method === "PATCH" && call.path.includes("pace-1"));
   assert.equal(patch.options.headers["If-Match"], 'W/"1"');
   assert.equal(graph.calls.some(call => call.method === "DELETE"), false);
@@ -130,17 +133,18 @@ test("void and restore are metadata operations and history remains available", a
 });
 
 test("stale edits conflict and partial audit failures map to retryable responses", async () => {
-  const graph = createMockGraph({ failAudit: true });
+  const graph = createMockGraph();
   const { service } = createService({ graph });
   const stale = await service.handle({ method: "POST", path: "/admin/pace/visits/42/edit", principal, body: { changes: { room: "PACE Room 2" }, correctionReason: "Correction", expectedEtag: 'W/"stale"', operationId: "op-stale-1" } });
   assert.equal(stale.status, 409);
+  graph.setFailAuditOutcome(true);
   const partial = await service.handle({ method: "POST", path: "/admin/pace/visits/42/edit", principal, body: { changes: { room: "PACE Room 2" }, correctionReason: "Correction", expectedEtag: 'W/"1"', operationId: "op-partial-1" } });
   assert.equal(partial.status, 502);
   assert.equal(partial.body.code, "PARTIAL_ADMIN_OPERATION");
-  graph.setFailAudit(false);
+  graph.setFailAuditOutcome(false);
   const retry = await service.handle({ method: "POST", path: "/admin/pace/visits/42/edit", principal, body: { changes: { room: "PACE Room 2" }, correctionReason: "Correction", expectedEtag: 'W/"1"', operationId: "op-partial-1" } });
   assert.equal(retry.status, 200);
-  assert.equal(retry.body.auditResult.duplicate, false);
+  assert.equal(retry.body.auditResult.fields.OperationStatus, "Succeeded");
 });
 
 test("production writes stay closed and demo adapters cannot run mutations", async () => {

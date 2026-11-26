@@ -18,7 +18,7 @@ export function decideAuthorization({ schema = {}, row = null, legacyAllowed = f
   if (paceField && row) {
     return { allowed: bool(row[paceField]), reason: bool(row[paceField]) ? "explicit-pace-dashboard" : "explicit-denied", field: paceField };
   }
-  if (!adminHubField && !paceField) return { allowed: Boolean(legacyAllowed), reason: legacyAllowed ? "temporary-role-fallback" : "temporary-role-fallback-denied" };
+  if (!adminHubField && !paceField) return { allowed: false, reason: "explicit-column-missing" };
   return { allowed: false, reason: "explicit-column-present-no-row" };
 }
 
@@ -31,10 +31,10 @@ export const APP_USERS = {
       const [rows, schema] = await Promise.all([window.GRAPH.getAppUsers(), window.GRAPH.getAppUsersSchema()]);
       this.schema = schema;
       this.row = rows.find(row => String(row.Email ?? "").trim().toLowerCase() === AUTH.email.toLowerCase().trim()) ?? null;
-      // Temporary migration fallback only. It deliberately checks the
-      // existing active identity/administrator role and never Admin Panel.
-      const legacyAllowed = Boolean(AUTH.staff?.active) && AUTH.staff?.role.toLowerCase() === "administrator";
-      this.decision = decideAuthorization({ schema, row: this.row, legacyAllowed });
+      // Production access is fail-closed. The active IEP_Users2 identity is
+      // necessary but never sufficient; the explicit AdminHubAccess field is
+      // the only privileged entitlement consumed here.
+      this.decision = decideAuthorization({ schema, row: this.row, legacyAllowed: false });
       return this.decision;
     } catch (error) {
       this.error = error;
@@ -45,7 +45,7 @@ export const APP_USERS = {
   get isAllowed() { return Boolean(this.decision?.allowed); },
   get authorizationNote() {
     if (APP_ENV === "demo") return "Demo access is enabled for this synthetic-only build.";
-    if (this.decision?.reason?.startsWith("temporary")) return "Temporary migration fallback: add an explicit Admin Hub flag before broader use.";
+    if (this.decision?.reason === "explicit-column-missing") return "AdminHubAccess is not configured for this authorization registry.";
     return this.decision?.field ? `Authorized by ${this.decision.field}.` : "Authorization is explicit to Admin Hub.";
   },
   // Exposed for tests and documentation checks: Admin Panel is not read here.
