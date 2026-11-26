@@ -1,33 +1,38 @@
-import { CONFIG } from "./config.js";
-import { dateRangeForPreset } from "./date-utils.js";
+import { APP_ENV } from "./environment.js";
+import { CONFIG, DEFAULT_PACE_RANGE_PRESET, PRODUCTION_ADMIN_WRITES_ENABLED } from "./config.js";
+import { dateRangeForPreset, localDateString } from "./date-utils.js";
 import { PACE_DATA } from "./modules/pace/pace-data.js";
 import { renderApp, renderError, renderLoading, renderLogin, renderUnauthorized } from "./app-shell.js";
 import { currentRoute, go } from "./router.js";
 import { rangeFromControls } from "./components/date-range.js";
-import { applyFollowUpAction } from "./modules/pace/pace-follow-up.js";
-import { localDateString } from "./date-utils.js";
-import { esc } from "./components/html.js";
-import { ROSTER } from "./modules/roster/roster-data.js";
-import { cleanStudentDraft, describeResult, findDuplicateStudents, findStaffByEmail, isValidEmail } from "./modules/roster/roster-model.js";
+import { applyFollowUpAction, seedFollowUps } from "./modules/pace/pace-follow-up.js";
+import { normalizeVisit } from "./modules/pace/pace-analytics.js";
+import { ADMIN_MUTATION_ACTIONS, REVIEW_STATUS, addDemoAdminNote, applyDemoEdit, markDemoViewed, recordDemoEdit, restoreDemoVisit, saveDemoReview, seedAdminReviews, voidDemoVisit } from "./modules/pace/pace-admin.js";
+import { ADMIN_API } from "./admin-api.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
-const newStudent = () => ({ first: "", last: "", teacher: "", classroom: "", ...CONFIG.roster.studentDefaults });
-const state = { followUpEnabled: CONFIG.followUp.enabled, range: dateRangeForPreset("today"), visits: [], followUps: {}, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, roster: { student: newStudent(), teacher: { name: "", email: "" }, search: "", saving: false, notice: null, duplicates: null } };
+const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, adminReviews: {}, adminReviewsSeeded: false, demoSnapshotLoaded: false, adminEtags: {}, production: { apiReady: ADMIN_API.configured, writesEnabled: ADMIN_API.writesEnabled }, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, mutationError: "" };
 
-// Re-rendering replaces every element, including the search box being typed
-// in, so put the cursor back where it was afterwards.
-function paint() {
-  const active = document.activeElement;
-  const typing = active?.tagName === "INPUT" && ["search", "text"].includes(active.type);
-  const selector = !typing ? null : active.id ? `#${active.id}` : active.dataset.activityFilter ? `[data-activity-filter="${active.dataset.activityFilter}"]` : null;
-  const { selectionStart, selectionEnd } = active ?? {};
-  root.innerHTML = renderApp(state);
-  const next = selector && root.querySelector(selector);
-  if (next) { next.focus(); next.setSelectionRange(selectionStart, selectionEnd); }
+function paint() { root.innerHTML = renderApp(state); }
+
+function readDemoSnapshot() {
+  if (!state.demo || !globalThis.localStorage) return null;
+  try { const value = JSON.parse(globalThis.localStorage.getItem(CONFIG.demoStorageKey) ?? "null"); return value && typeof value === "object" ? value : null; } catch { return null; }
 }
 
-async function loadMsal() {
+function persistDemoSnapshot() {
+  if (!state.demo || !globalThis.localStorage) return;
+  try { globalThis.localStorage.setItem(CONFIG.demoStorageKey, JSON.stringify({ visits: state.visits, followUps: state.followUps, adminReviews: state.adminReviews })); } catch { /* Browser storage is optional for the demo. */ }
+}
+
+function resetDemoSnapshot() {
+  if (!state.demo) return;
+  try { globalThis.localStorage?.removeItem(CONFIG.demoStorageKey); } catch { /* Browser storage is optional for the demo. */ }
+  PACE_DATA.clear(); state.visits = []; state.followUps = {}; state.followUpsSeeded = false; state.adminReviews = {}; state.adminReviewsSeeded = false; state.demoSnapshotLoaded = false; state.activeVisitId = null; state.mutationError = "";
+}
+
+async function loadMsalForProduction() {
   if (window.msal) return;
   await new Promise((resolve, reject) => {
     const script = document.createElement("script");
@@ -39,105 +44,159 @@ async function loadMsal() {
 }
 
 async function loadData(force = false) {
-  const result = await PACE_DATA.load(state.range, force); state.visits = result.visits;
+  const priorVisits = new Map(state.visits.map(visit => [visit.id, visit]));
+  const saved = state.demo && !state.demoSnapshotLoaded ? readDemoSnapshot() : null;
+  const savedVisits = new Map((saved?.visits ?? []).filter(visit => visit?.id).map(visit => [visit.id, visit]));
+  const result = await PACE_DATA.load(state.range, force); state.visits = result.visits.map(visit => state.demo && (priorVisits.get(visit.id) ?? savedVisits.get(visit.id) ?? visit));
+  if (state.demo && !state.followUpsSeeded) { state.followUps = saved?.followUps ?? seedFollowUps(state.visits); state.followUpsSeeded = true; }
+  if (state.demo && !state.adminReviewsSeeded) { state.adminReviews = saved?.adminReviews ?? seedAdminReviews(state.visits); state.adminReviewsSeeded = true; }
+  state.demoSnapshotLoaded = true; persistDemoSnapshot();
   paint();
 }
 
-// The roster is only read once someone opens a roster page.
-async function showRoute() {
-  state.activeVisitId = null; state.roster.notice = null; state.roster.duplicates = null;
-  paint();
-  if (currentRoute().page.startsWith("roster-") && !ROSTER.loaded) { await ROSTER.ensureLoaded(); paint(); }
+function adminContext(reason) { return { authorized: state.demo || (APP_ENV === "production" && PRODUCTION_ADMIN_WRITES_ENABLED && AUTH?.isAuthenticated === true && APP_USERS?.isAllowed === true), actor: state.userName || "Demo Administrator", reason, at: new Date().toISOString() }; }
+
+function readEditDraft() {
+  const value = id => root.querySelector(`#${id}`)?.value ?? "";
+  return { student: value("adminStudent"), date: value("adminDate"), teacherCameFrom: value("adminTeacher"), room: value("adminRoom"), specialists: value("adminSpecialists"), timeIn: value("adminTimeIn"), timeOut: value("adminTimeOut"), reasons: value("adminReasons"), interventions: value("adminInterventions"), scmUsed: root.querySelector("#adminScm")?.value ?? "", notes: value("adminNotesSource"), returnStatus: value("adminReturnStatus") };
 }
 
-async function reloadRoster() { const loading = ROSTER.load(); paint(); await loading; paint(); }
+function apiBool(value) { return value === true || ["yes", "true", "1"].includes(String(value ?? "").trim().toLowerCase()); }
 
-function rosterNotice(tone, text) { state.roster.notice = { tone, text }; state.roster.duplicates = null; paint(); }
-
-async function saveToRoster(save, label, noun, onSaved) {
-  const ui = state.roster;
-  ui.saving = true; ui.notice = null; ui.duplicates = null; paint();
-  const result = await save();
-  ui.saving = false;
-  const message = describeResult(result, label, noun);
-  if (message.ok) onSaved();
-  rosterNotice(message.ok ? "success" : "error", message.text);
+function apiReviewEntry(visitId, reviewItem, notes = [], audit = []) {
+  const fields = reviewItem?.fields ?? {};
+  const status = { Unreviewed: REVIEW_STATUS.UNREVIEWED, Reviewed: REVIEW_STATUS.REVIEWED, "Needs Follow-Up": REVIEW_STATUS.NEEDS_FOLLOW_UP }[fields.ReviewStatus] ?? REVIEW_STATUS.UNREVIEWED;
+  const followUpStatus = { Open: "open", "In Progress": "in-progress", Resolved: "resolved" }[fields.FollowUpStatus] ?? "open";
+  return { visitId, status, notes: notes.map(item => ({ id: item.id, visitId, text: item.fields?.NoteText ?? "", actor: item.fields?.Actor ?? "", createdAt: item.fields?.CreatedAt ?? "", supersedesNoteId: item.fields?.SupersedesNoteID ?? null })), followUpStatus, followUpAssignedTo: fields.FollowUpAssignedTo ?? "", followUpDueDate: fields.FollowUpDueDate ?? "", isVoided: apiBool(fields.IsVoided), voidReason: fields.VoidReason ?? "", reviewedBy: fields.ReviewedBy ?? null, reviewedAt: fields.ReviewedAt ?? null, sourceVersion: fields.LastReviewedRecordVersion ?? null, version: 1, history: audit.map(item => ({ action: item.fields?.ActionType ?? "Review", actor: item.fields?.Actor ?? "", at: item.fields?.Timestamp ?? "", reason: item.fields?.Reason ?? "" })) };
 }
 
-async function addStudent(allowDuplicate = false) {
-  const ui = state.roster;
-  if (ui.saving) return;
-  const draft = cleanStudentDraft(ui.student);
-  if (!draft.first || !draft.last) return rosterNotice("error", "Enter the student's first and last name.");
-  if (!draft.teacher) return rosterNotice("error", "Choose a teacher.");
-  if (!ROSTER.complete) return rosterNotice("error", "The roster is not fully loaded, so duplicates can't be ruled out. Reload it and try again.");
-  if (!allowDuplicate) {
-    const matches = findDuplicateStudents(ROSTER.students, draft.first, draft.last);
-    if (matches.length) { ui.notice = null; ui.duplicates = matches; paint(); return; }
-  }
-  // Teacher, classroom and the switches stay filled in for the next student in the same class.
-  await saveToRoster(() => ROSTER.addStudent(draft), `"${draft.first} ${draft.last}"`, "Student", () => { ui.student = { ...ui.student, first: "", last: "" }; });
-  root.querySelector("#rosterFirst")?.focus();
+function applyProductionSnapshot(snapshot, history = {}) {
+  if (!snapshot?.source?.id) return;
+  const source = { id: snapshot.source.id, ...(snapshot.source.fields ?? {}) };
+  const visit = normalizeVisit(source);
+  state.visits = state.visits.map(item => item.id === visit.id ? visit : item);
+  state.adminEtags[visit.id] = snapshot.source.etag ?? state.adminEtags[visit.id] ?? null;
+  state.adminReviews[visit.id] = apiReviewEntry(visit.id, snapshot.review, history.notes ?? snapshot.notes ?? [], history.audit ?? []);
 }
 
-async function addTeacher() {
-  const ui = state.roster;
-  if (ui.saving) return;
-  const draft = { name: ui.teacher.name.replace(/\s+/g, " ").trim(), email: ui.teacher.email.trim() };
-  if (!draft.name) return rosterNotice("error", "Enter the teacher's name as Last, First.");
-  if (!isValidEmail(draft.email)) return rosterNotice("error", "Enter the teacher's full email address.");
-  if (!ROSTER.complete) return rosterNotice("error", "The roster is not fully loaded, so duplicates can't be ruled out. Reload it and try again.");
-  // Sign-in looks people up by email, so a second row for the same email is never added.
-  const [existing] = findStaffByEmail(ROSTER.staff, draft.email);
-  if (existing) return rosterNotice("error", `${draft.email} is already in ${CONFIG.lists.users} as ${existing.name || "an unnamed user"} (${existing.role || "no role"}, ${existing.active ? "active" : "inactive"}). Nothing was added. Changes to existing users are made in MAC-Walkthrough Setup.`);
-  await saveToRoster(() => ROSTER.addTeacher(draft), `"${draft.name}"`, "Teacher", () => { ui.teacher = { name: "", email: "" }; });
+async function hydrateProductionVisit(visitId) {
+  if (state.demo || !ADMIN_API.configured) return;
+  const [snapshot, history] = await Promise.all([ADMIN_API.getVisit(visitId), ADMIN_API.getHistory(visitId)]);
+  applyProductionSnapshot(snapshot, history);
 }
 
-function setRosterField(target) {
-  const [form, key] = target.dataset.rosterField.split(".");
-  state.roster[form][key] = target.type === "checkbox" ? target.checked : target.value;
+async function handleProductionAction(action, activeVisit) {
+  if (!ADMIN_API.writesEnabled) throw new Error("Production administrative writes are disabled pending approved infrastructure configuration.");
+  const visitId = activeVisit.id;
+  if (!state.adminEtags[visitId]) await hydrateProductionVisit(visitId);
+  if (action === ADMIN_MUTATION_ACTIONS.EDIT) {
+    const draft = readEditDraft();
+    draft.scmUsed = draft.scmUsed === "" ? null : draft.scmUsed === "true";
+    await ADMIN_API.edit(visitId, { changes: draft, correctionReason: root.querySelector("#adminCorrectionReason")?.value ?? "", expectedEtag: state.adminEtags[visitId] });
+  } else if (action === ADMIN_MUTATION_ACTIONS.REVIEW) {
+    const status = root.querySelector("#adminReviewStatus")?.value ?? REVIEW_STATUS.UNREVIEWED;
+    const followUpStatus = root.querySelector("#adminFollowUpStatus")?.value ?? "open";
+    const reviewStatus = { [REVIEW_STATUS.UNREVIEWED]: "Unreviewed", [REVIEW_STATUS.REVIEWED]: "Reviewed", [REVIEW_STATUS.NEEDS_FOLLOW_UP]: "Needs Follow-Up" }[status] ?? "Unreviewed";
+    const graphFollowUpStatus = { open: "Open", "in-progress": "In Progress", resolved: "Resolved" }[followUpStatus] ?? "Open";
+    await ADMIN_API.saveReview(visitId, { reviewStatus, followUpNeeded: status === REVIEW_STATUS.NEEDS_FOLLOW_UP, followUpStatus: graphFollowUpStatus, followUpAssignedTo: root.querySelector("#adminFollowUpAssignedTo")?.value ?? "", followUpDueDate: root.querySelector("#adminFollowUpDueDate")?.value ?? "", reason: root.querySelector("#adminReviewReason")?.value ?? "" });
+  } else if (action === ADMIN_MUTATION_ACTIONS.MARK_VIEWED) await ADMIN_API.markViewed(visitId);
+  else if (action === ADMIN_MUTATION_ACTIONS.ADD_NOTE) await ADMIN_API.addNote(visitId, root.querySelector("#adminNoteText")?.value ?? "");
+  else if (action === ADMIN_MUTATION_ACTIONS.VOID) {
+    if (!window.confirm("Void this production submission? The original SharePoint record will remain intact.")) return;
+    await ADMIN_API.voidVisit(visitId, root.querySelector("#adminVoidReason")?.value ?? "");
+  } else if (action === ADMIN_MUTATION_ACTIONS.RESTORE) await ADMIN_API.restoreVisit(visitId);
+  await hydrateProductionVisit(visitId);
 }
 
 async function boot() {
   root.innerHTML = renderLoading();
   try {
-    await loadMsal();
-    const [{ AUTH: auth }, { GRAPH: graph }, { APP_USERS: appUsers }] = await Promise.all([import("./auth.js"), import("./graph.js"), import("./authorization.js")]);
-    AUTH = auth; GRAPH = graph; APP_USERS = appUsers; window.AUTH = AUTH; window.GRAPH = GRAPH;
-    await AUTH.init();
-    if (!AUTH.account) { root.innerHTML = renderLogin(AUTH.signInError); return; }
-    if (!AUTH.isAuthenticated) { root.innerHTML = renderUnauthorized(AUTH.error || "Your account is not approved for Admin Hub."); return; }
-    const decision = await APP_USERS.authorize();
-    if (!decision.allowed) { root.innerHTML = renderUnauthorized("Your account is not authorized for Admin Hub.", APP_USERS.error ? "Permission verification failed. Please try again later." : APP_USERS.authorizationNote); return; }
-    state.userName = AUTH.displayName;
-    ROSTER.writeAllowed = decision.allowed;
+    if (APP_ENV === "invalid") { root.innerHTML = renderError("Admin Hub environment is invalid", "This build was stopped safely. Rebuild with an explicit demo or production environment."); return; }
+    if (APP_ENV === "production") {
+      await loadMsalForProduction();
+      const [{ AUTH: auth }, { GRAPH: graph }, { APP_USERS: appUsers }] = await Promise.all([import("./auth.js"), import("./graph.js"), import("./authorization.js")]);
+      AUTH = auth; GRAPH = graph; APP_USERS = appUsers; window.AUTH = AUTH; window.GRAPH = GRAPH;
+      await AUTH.init();
+      if (!AUTH.account) { root.innerHTML = renderLogin(); return; }
+      if (!AUTH.isAuthenticated) { root.innerHTML = renderUnauthorized(AUTH.error || "Your account is not approved for Admin Hub."); return; }
+      const decision = await APP_USERS.authorize();
+      if (!decision.allowed) { root.innerHTML = renderUnauthorized("Your account is not authorized for Admin Hub.", APP_USERS.error ? "Permission verification failed. Please try again later." : APP_USERS.authorizationNote); return; }
+      state.userName = AUTH.displayName;
+    } else {
+      state.userName = "Demo Administrator";
+    }
     await loadData();
-    if (currentRoute().page.startsWith("roster-")) await showRoute();
   } catch (error) {
-    console.error(error); root.innerHTML = renderError("Admin Hub could not load", `We could not load the workspace right now. ${esc(error?.message || "Check your connection and try again.")}`);
+    console.error(error); root.innerHTML = renderError("Admin Hub could not load", "We could not load the workspace right now. Check your connection or open demo mode for a local review.");
   }
 }
 
-document.addEventListener("click", event => {
+document.addEventListener("click", async event => {
+  const adminAction = event.target.closest("[data-admin-action]");
+  if (adminAction) {
+    const activeVisit = state.visits.find(item => item.id === state.activeVisitId);
+    if (!activeVisit) return;
+    const action = adminAction.dataset.adminAction;
+    try {
+      if (!state.demo) {
+        await handleProductionAction(action, activeVisit);
+        state.mutationError = "";
+        paint();
+        return;
+      }
+      if (!state.demo && !PRODUCTION_ADMIN_WRITES_ENABLED) throw new Error("Production administrative writes are disabled pending approval.");
+      if (action === ADMIN_MUTATION_ACTIONS.EDIT) {
+        const reason = root.querySelector("#adminCorrectionReason")?.value ?? "";
+        const result = applyDemoEdit(state.visits, activeVisit.id, readEditDraft(), { ...adminContext(reason), expectedVersion: activeVisit.adminVersion ?? 1 });
+        state.visits = result.visits; state.adminReviews = recordDemoEdit(state.adminReviews, activeVisit.id, { ...adminContext(result.reason), at: result.at }); state.mutationError = "";
+      } else if (action === ADMIN_MUTATION_ACTIONS.REVIEW) {
+        const status = root.querySelector("#adminReviewStatus")?.value ?? "";
+        const reviewReason = root.querySelector("#adminReviewReason")?.value ?? "";
+        state.adminReviews = saveDemoReview(state.adminReviews, activeVisit.id, { status, followUpStatus: root.querySelector("#adminFollowUpStatus")?.value ?? "open", followUpAssignedTo: root.querySelector("#adminFollowUpAssignedTo")?.value ?? "", followUpDueDate: root.querySelector("#adminFollowUpDueDate")?.value ?? "", reason: reviewReason }, { ...adminContext(reviewReason), sourceVersion: activeVisit.adminVersion ?? 1 });
+        state.mutationError = "";
+      } else if (action === ADMIN_MUTATION_ACTIONS.MARK_VIEWED) {
+        state.adminReviews = markDemoViewed(state.adminReviews, activeVisit.id, { ...adminContext("Marked as viewed"), sourceVersion: activeVisit.adminVersion ?? 1 });
+        state.mutationError = "";
+      } else if (action === ADMIN_MUTATION_ACTIONS.ADD_NOTE) {
+        state.adminReviews = addDemoAdminNote(state.adminReviews, activeVisit.id, root.querySelector("#adminNoteText")?.value ?? "", adminContext("Administrative note added"));
+        state.mutationError = "";
+      } else if (action === ADMIN_MUTATION_ACTIONS.VOID) {
+        const reason = root.querySelector("#adminVoidReason")?.value ?? "";
+        if (!window.confirm("Void this synthetic submission? The original demo record will remain intact.")) return;
+        state.adminReviews = voidDemoVisit(state.adminReviews, activeVisit.id, adminContext(reason)); state.mutationError = "";
+      } else if (action === ADMIN_MUTATION_ACTIONS.RESTORE) {
+        state.adminReviews = restoreDemoVisit(state.adminReviews, activeVisit.id, adminContext("Submission restored")); state.mutationError = "";
+      }
+      persistDemoSnapshot();
+      paint();
+    } catch (error) {
+      state.mutationError = error.message;
+      paint();
+    }
+    return;
+  }
+  const queueFilter = event.target.closest("[data-review-queue-filter]");
+  if (queueFilter) { state.activityFilters.reviewStatus = queueFilter.dataset.reviewQueueFilter; go("pace/activity"); paint(); return; }
   const followUpAction = event.target.closest("[data-follow-up-action]");
-  if (followUpAction && state.followUpEnabled) {
+  if (followUpAction && state.demo) {
     const activeVisit = state.visits.find(item => item.id === state.activeVisitId);
     if (!activeVisit) return;
     const note = root.querySelector("#followUpNote")?.value ?? "";
     const action = followUpAction.dataset.followUpAction;
-    const actor = state.userName;
-    try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); paint(); } catch (error) { console.error(error); }
+    const actor = action === "start-review" ? "Morgan Reed — Behavior Specialist" : "Jordan Ellis — Administrator";
+    try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); persistDemoSnapshot(); paint(); } catch (error) { state.mutationError = error.message; paint(); }
     return;
   }
-  const rosterAction = event.target.closest("[data-roster-action]")?.dataset.rosterAction;
-  if (rosterAction === "reload") { reloadRoster(); return; }
-  if (rosterAction === "add-anyway") { addStudent(true); return; }
-  if (rosterAction === "dismiss-duplicates") { state.roster.duplicates = null; paint(); return; }
-  // The backdrop wraps the dialog, so it closes only when the backdrop itself is clicked.
   const close = event.target.closest("[data-close-modal]");
-  if (close && (event.target === close || !close.classList.contains("modal-backdrop"))) { state.activeVisitId = null; paint(); return; }
+  if (close) { state.activeVisitId = null; paint(); return; }
+  if (event.target.closest("#resetDemo")) {
+    if (!window.confirm("Reset all synthetic demo edits, notes, reviews and follow-up state? This affects only this browser.")) return;
+    resetDemoSnapshot(); await loadData(true); return;
+  }
+  const openVisit = event.target.closest("[data-open-visit]");
+  if (openVisit) { state.activeVisitId = openVisit.dataset.openVisit; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.mutationError = error.message; paint(); } } return; }
   const visit = event.target.closest("[data-visit]");
-  if (visit) { state.activeVisitId = visit.dataset.visit; paint(); return; }
+  if (visit) { state.activeVisitId = visit.dataset.visit; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.mutationError = error.message; paint(); } } return; }
   const student = event.target.closest("[data-student]");
   if (student && !event.target.closest("a")) { go(`pace/students/${encodeURIComponent(student.dataset.student)}`); return; }
   const sort = event.target.closest("[data-sort]");
@@ -146,32 +205,26 @@ document.addEventListener("click", event => {
   if (event.target.closest("#signOut")) { AUTH?.logout(); return; }
 });
 
+document.addEventListener("keydown", event => {
+  const viewport = event.target?.closest?.(".trend-chart-viewport");
+  if (!viewport || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+  viewport.scrollLeft += event.key === "ArrowRight" ? 120 : -120;
+  event.preventDefault();
+});
+
 document.addEventListener("change", async event => {
   if (event.target.id === "datePreset" || event.target.id === "rangeFrom" || event.target.id === "rangeTo") {
     const control = event.target.closest(".date-control"); state.range = rangeFromControls(control, state.range); state.activeVisitId = null; try { await loadData(true); } catch { root.innerHTML = renderError("PACE data could not load", "The date range could not be loaded. Please try again."); } return;
   }
-  if (event.target.dataset.rosterField && event.target.type !== "text") { setRosterField(event.target); return; }
-  // Text boxes are handled on "input". Chrome also fires "change" when a redraw
-  // removes the box being typed in, and repainting then would drop the cursor.
   const filter = event.target.closest("[data-activity-filter]");
-  if (filter && filter.tagName !== "INPUT") { state.activityFilters[filter.dataset.activityFilter] = filter.value; paint(); }
+  if (filter) { state.activityFilters[filter.dataset.activityFilter] = filter.value; paint(); }
 });
 
 document.addEventListener("input", event => {
   if (event.target.id === "studentsSearch") { state.studentsSearch = event.target.value; paint(); }
-  if (event.target.id === "rosterSearch") { state.roster.search = event.target.value; paint(); }
-  // Form fields only record what was typed; nothing needs redrawing until a save.
-  if (event.target.dataset.rosterField && event.target.type === "text") setRosterField(event.target);
   const filter = event.target.closest("[data-activity-filter]");
   if (filter && filter.tagName === "INPUT") { state.activityFilters[filter.dataset.activityFilter] = filter.value; paint(); }
 });
 
-document.addEventListener("submit", event => {
-  const form = event.target.closest("[data-roster-form]");
-  if (!form) return;
-  event.preventDefault();
-  if (form.dataset.rosterForm === "student") addStudent(); else addTeacher();
-});
-
-window.addEventListener("hashchange", showRoute);
+window.addEventListener("hashchange", () => { state.activeVisitId = null; paint(); });
 boot();

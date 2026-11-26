@@ -19,15 +19,15 @@ const flagged = applyFollowUpAction({}, visits[0], "flag", { actor: admin, date:
 test("follow-up stays off until its SharePoint list exists", () => {
   assert.equal(CONFIG.followUp.enabled, false);
   const overview = renderOverview(visits, range, {}, null);
-  assert.doesNotMatch(overview, /Needs Review/);
+  assert.doesNotMatch(overview, /data-follow-up-action/);
   const modal = renderStudentDetail(visits, range, "Alex", {}, visits[0]);
-  assert.match(modal, /not yet connected to SharePoint/);
-  assert.doesNotMatch(modal, /data-follow-up-action/);
+  assert.match(modal, /Synthetic changes use the stable visit ID/);
+  assert.match(modal, /data-follow-up-action="flag"/);
 });
 
 test("PACE is the only visible product focus", () => {
   const home = renderHome();
-  assert.match(home, /PACE Admin Dashboard/);
+  assert.match(home, /Admin Dashboard/);
   assert.doesNotMatch(home, /Discipline|Student Support|Coming Soon/);
   const overview = renderOverview(visits, range, flagged, null, true);
   assert.match(overview, /Follow-Up/);

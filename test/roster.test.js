@@ -15,7 +15,46 @@ const COLUMNS = {
 function fakeSite({ onSend } = {}) {
   const items = { stu: [{ id: "1", fields: { Title: "Amy", field_2: "Ruiz", Teacher: "Bossons, A", Active: true, PACE: "Yes", Pulse: "No" } }], usr: [{ id: "7", fields: { Title: "teacher-bossons", field_1: "Bossons, Amber", field_2: "Teacher", field_3: "Yes", Email: "bossa@iu29.org" } }, { id: "8", fields: { field_1: "Lead, Pat", field_2: "Administrator", field_3: "Yes", Email: "leadp@iu29.org" } }] };
   const sent = [];
+  const listKey = listName => listName === "IEP_Students_2026_27" ? "stu" : "usr";
+  const displayRow = (list, item) => {
+    const inverse = Object.fromEntries(Object.entries(buildSchema(COLUMNS[list])).map(([display, internal]) => [internal, display]));
+    return { id: item.id, ...Object.fromEntries(Object.entries(item.fields).map(([key, value]) => [inverse[key] ?? key, value])) };
+  };
   const graph = { ...GRAPH, siteIds: new Map(), lists: new Map(), schemas: new Map(), columns: new Map(), sent, items,
+    async getListItems(listName) {
+      const list = listKey(listName);
+      return items[list].map(item => displayRow(list, item));
+    },
+    async getSchema(listName) {
+      const list = listKey(listName);
+      return buildSchema(COLUMNS[list]);
+    },
+    async getColumns(listName) {
+      const list = listKey(listName);
+      return COLUMNS[list];
+    },
+    async getListItem(listName, id) {
+      const list = listKey(listName);
+      const item = items[list].find(row => row.id === String(id));
+      return item ? displayRow(list, item) : null;
+    },
+    async prepareFields(listName, values) {
+      const list = listKey(listName);
+      const fields = {};
+      for (const [label, value] of Object.entries(values)) {
+        const column = COLUMNS[list].find(candidate => candidate.displayName === label || candidate.name === label) ?? { name: label, displayName: label, text: { maxLength: 255 } };
+        Object.assign(fields, encodeField(column, value));
+      }
+      for (const column of COLUMNS[list].filter(candidate => candidate.required && candidate.displayName && !candidate.hidden && !candidate.readOnly)) {
+        const label = column.displayName;
+        if (!(label in values) || values[label] === "") throw new Error(`The required column requires "${label}".`);
+      }
+      return fields;
+    },
+    async createListItem(listName, fields) {
+      const list = listKey(listName);
+      return this.send("POST", `sites/site/lists/${list}/items`, { fields });
+    },
     async get(path) {
       if (!path.includes("/lists")) return { id: "site" };
       if (path.endsWith("$select=id,name,displayName")) return { value: [{ id: "stu", name: "IEP_Students_2026_27" }, { id: "usr", name: "IEP_Users2" }] };

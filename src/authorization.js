@@ -1,5 +1,5 @@
-import { CONFIG } from "./config.js";
-import { AUTH, findRowByEmail } from "./auth.js";
+import { APP_ENV, CONFIG } from "./config.js";
+import { AUTH } from "./auth.js";
 
 function bool(value) {
   if (typeof value === "boolean") return value;
@@ -7,38 +7,47 @@ function bool(value) {
   return ["yes", "true", "1"].includes(String(value ?? "").trim().toLowerCase());
 }
 
-// Same model as PACE, MAC-Walkthrough and Daily Pulse: an IEP_App_Users row is
-// authoritative whenever it exists. With no row, the user falls back to the
-// legacy rule (active IEP_Users2 administrator) unless enforceAppUsers is on.
-export function decideAuthorization({ row = null, legacyAllowed = false, enforce = CONFIG.authorization.enforceAppUsers } = {}) {
-  const field = CONFIG.authorization.permissionField;
-  if (row) {
-    const allowed = bool(row[field]);
-    return { allowed, reason: allowed ? "app-users-permission" : "app-users-denied", field };
+function findField(schema, candidates) { return candidates.find(name => Object.prototype.hasOwnProperty.call(schema ?? {}, name)) ?? null; }
+
+export function decideAuthorization({ schema = {}, row = null, legacyAllowed = false } = {}) {
+  const adminHubField = findField(schema, CONFIG.authorization.adminHubFields);
+  const paceField = findField(schema, CONFIG.authorization.paceDashboardFields);
+  if (adminHubField && row) {
+    return { allowed: bool(row[adminHubField]), reason: bool(row[adminHubField]) ? "explicit-admin-hub" : "explicit-denied", field: adminHubField };
   }
-  if (enforce) return { allowed: false, reason: "enforced-no-row" };
-  return { allowed: Boolean(legacyAllowed), reason: legacyAllowed ? "legacy-fallback" : "legacy-denied" };
+  if (paceField && row) {
+    return { allowed: bool(row[paceField]), reason: bool(row[paceField]) ? "explicit-pace-dashboard" : "explicit-denied", field: paceField };
+  }
+  if (!adminHubField && !paceField) return { allowed: false, reason: "explicit-column-missing" };
+  return { allowed: false, reason: "explicit-column-present-no-row" };
 }
 
 export const APP_USERS = {
-  row: null, error: null, decision: null,
+  row: null, schema: null, error: null, decision: null,
   async authorize() {
+    if (APP_ENV === "demo") { this.decision = { allowed: true, reason: "demo-environment" }; return this.decision; }
+    if (APP_ENV !== "production") { this.decision = { allowed: false, reason: "invalid-environment" }; return this.decision; }
     try {
-      this.row = await findRowByEmail(CONFIG.lists.appUsers, AUTH.emails);
-      const legacyAllowed = Boolean(AUTH.staff?.active) && AUTH.staff?.role.toLowerCase() === "administrator";
-      this.decision = decideAuthorization({ row: this.row, legacyAllowed });
+      const [rows, schema] = await Promise.all([window.GRAPH.getAppUsers(), window.GRAPH.getAppUsersSchema()]);
+      this.schema = schema;
+      this.row = rows.find(row => String(row.Email ?? "").trim().toLowerCase() === AUTH.email.toLowerCase().trim()) ?? null;
+      // Production access is fail-closed. The active IEP_Users2 identity is
+      // necessary but never sufficient; the explicit AdminHubAccess field is
+      // the only privileged entitlement consumed here.
+      this.decision = decideAuthorization({ schema, row: this.row, legacyAllowed: false });
       return this.decision;
     } catch (error) {
-      // A failed lookup always denies; it never falls back to the legacy rule.
       this.error = error;
       this.decision = { allowed: false, reason: "lookup-failed" };
       return this.decision;
     }
   },
+  get isAllowed() { return Boolean(this.decision?.allowed); },
   get authorizationNote() {
-    const field = CONFIG.authorization.permissionField;
-    if (this.decision?.reason === "app-users-denied") return `Your IEP_App_Users row does not have ${field} set to Yes.`;
-    if (this.decision?.reason === "enforced-no-row") return "You do not have a row in IEP_App_Users.";
-    return `Ask an administrator to set ${field} to Yes on your IEP_App_Users row.`;
-  }
+    if (APP_ENV === "demo") return "Demo access is enabled for this synthetic-only build.";
+    if (this.decision?.reason === "explicit-column-missing") return "AdminHubAccess is not configured for this authorization registry.";
+    return this.decision?.field ? `Authorized by ${this.decision.field}.` : "Authorization is explicit to Admin Hub.";
+  },
+  // Exposed for tests and documentation checks: Admin Panel is not read here.
+  adminPanelIsNeverUsed: true
 };

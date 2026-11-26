@@ -12,6 +12,9 @@ export const FOLLOW_UP_STATUS_LABELS = {
   [FOLLOW_UP_STATUS.COMPLETE]: "Follow-Up Complete"
 };
 
+const DEMO_ADMIN = "Jordan Ellis — Administrator";
+const DEMO_SPECIALIST = "Morgan Reed — Behavior Specialist";
+
 
 function timestamp(date, hour) { return `${date}T${hour}:00`; }
 
@@ -19,7 +22,7 @@ function record(visit, status, details) {
   return {
     visitId: visit.id,
     status,
-    flaggedBy: details.flaggedBy,
+    flaggedBy: details.flaggedBy ?? DEMO_ADMIN,
     flaggedAt: details.flaggedAt,
     reviewedBy: details.reviewedBy ?? null,
     reviewedAt: details.reviewedAt ?? null,
@@ -27,6 +30,15 @@ function record(visit, status, details) {
     completedBy: details.completedBy ?? null,
     completedAt: details.completedAt ?? null
   };
+}
+
+export function seedFollowUps(visits, today = localDateString()) {
+  const byId = id => visits.find(visit => visit.id === id); const seeded = {};
+  const add = (ids, status, details) => ids.map(byId).filter(Boolean).forEach((visit, index) => { seeded[visit.id] = record(visit, status, typeof details === "function" ? details(index) : details); });
+  add(["demo-002", "demo-017", "demo-032", "demo-047", "demo-062", "demo-077"], FOLLOW_UP_STATUS.NEEDS_REVIEW, index => ({ flaggedAt: timestamp(today, `0${9 + (index % 2)}`) }));
+  add(["demo-003", "demo-092", "demo-107"], FOLLOW_UP_STATUS.IN_REVIEW, index => ({ flaggedAt: timestamp(today, "09"), reviewedBy: DEMO_SPECIALIST, reviewedAt: timestamp(today, `1${index}`), followUpNote: "Demo review started; classroom context still being gathered." }));
+  add(["demo-001", "demo-122", "demo-137", "demo-152", "demo-167", "demo-176", "demo-178"], FOLLOW_UP_STATUS.COMPLETE, index => ({ flaggedAt: timestamp(today, "09"), reviewedBy: DEMO_SPECIALIST, reviewedAt: timestamp(today, "10"), followUpNote: index % 2 ? "Demo follow-up documented with the classroom team." : "Demo follow-up completed and next check-in noted.", completedBy: DEMO_ADMIN, completedAt: timestamp(today, "14") }));
+  return seeded;
 }
 
 // Follow-up is deliberately a separate layer. It is keyed by the immutable

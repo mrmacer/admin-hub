@@ -3,9 +3,7 @@
 Admin Hub is an administrator- and behavior-specialist-facing PACE dashboard.
 The visible product is deliberately focused on the information gap around
 PACE visits and administrative follow-up; it is not an SIS, discipline system,
-IEP editor, or replacement for existing school systems. Its one write feature
-is a Roster area where administrators add students and teachers to the IEP
-Skook roster (see [Roster](#roster)).
+IEP editor, or replacement for existing school systems.
 
 ## Architecture audit
 
@@ -21,58 +19,57 @@ Safely reused from PACE Room Tracker and MAC-Walkthrough:
   Person value unwrapping, and null-safe SCM handling.
 - Graph pagination with stable SharePoint item IDs.
 
-- MAC's student-roster add path: the `IEP_Students_2026_27` column rules,
-  canonical Teacher value, duplicate-name check, type-aware Yes/No values, and
-  read-back verification by item id. Teachers are added the way MAC's Setup →
-  Users does, fixed to Role = Teacher.
-
 Intentionally excluded: MAC intelligence, Daily Pulse, Living IEP logic,
-Melissa-specific workflows, the rest of MAC Setup (the full Users list,
-Administrator accounts, editing or deactivating anyone, classrooms, data
-tools), reports, exports, and any PACE write, edit, or delete operation.
+Melissa-specific workflows, setup tools, reports, exports, and direct
+browser-side PACE write or delete operations. Approved production corrections
+must cross the protected server API described below; its write gate remains
+closed in the checked-in build.
 
-## Authorization
+## Authorization design
 
-Admin Hub uses the same access model as PACE, MAC-Walkthrough and Daily Pulse.
-A user must first have an active row in `IEP_Users2`. Then:
+`IEP_App_Users` is the authorization source. Production access requires the
+explicit `AdminHubAccess` Yes/No field and an active matching identity in
+`IEP_Users2`. The temporary Administrator-role fallback has been removed.
 
-- **Has an `IEP_App_Users` row (matched by Email):** the `Admin Panel` column
-  decides. Yes allows access; No or blank denies it.
-- **No `IEP_App_Users` row:** falls back to the legacy rule, so an active
-  `IEP_Users2` user with Role = Administrator is allowed.
-- **The lookup fails:** access is denied.
+Required access column:
 
-`Admin Panel` is shared with MAC-Walkthrough: Yes grants both the MAC admin
-panel and Admin Hub. The column is set in
-`CONFIG.authorization.permissionField`. Once every user has an `IEP_App_Users`
-row, set `CONFIG.authorization.enforceAppUsers` to `true` so a missing row
-means no access.
+| Column | Type | Purpose |
+| --- | --- | --- |
+| `AdminHubAccess` | Yes/No, default No | Explicit access to the protected Admin Hub API and PACE administrative workflow |
+
+The app does not create or modify SharePoint columns. Administrators and Lead
+BIs are eligible only when IT explicitly grants this field. `PACE` and
+`Admin Panel` are never read as Admin Hub grants. See
+[`docs/PROTECTED_API_CONFIGURATION.md`](docs/PROTECTED_API_CONFIGURATION.md)
+for the server/API configuration handoff.
 
 For a future production follow-up workflow, consider a separate permission
 such as `PACE Follow-Up` with Manage access. Do not modify `IEP_App_Users` as
-part of this project.
+part of the demo experiment.
 
 ## Application structure
 
 ```text
-index.html / styles.css / server.js
+index.html / styles.css / server.js / api/admin/pace/[...path].js
 src/
   config.js              Entra, SharePoint, module, and field configuration
   auth.js                Existing MSAL identity pattern
-  graph.js               Graph client: paging, schema mapping, roster-only creates
+  graph.js               Read-only Graph client with paging and schema mapping
   authorization.js       IEP_App_Users decision policy
   date-utils.js          Local calendar and Graph boundary handling
+  demo-data.js           Synthetic, non-identifying demo records
   router.js / app-shell.js / main.js
   components/            Escaping, cards, empty states, date-range control
   modules/pace/
-    pace-data.js         Graph data adapter for IEP_Pace_Visits
+    pace-data.js         Demo/Graph data adapter
     pace-analytics.js    Pure normalization and aggregation functions
-    pace-follow-up.js    Separate review-state model
+    pace-follow-up.js    Separate synthetic review-state model
     pace-views.js        Overview, students, detail, and activity UI
-  modules/roster/
-    roster-model.js      Pure student/teacher rules shared with MAC-Walkthrough
-    roster-data.js       Roster load and the verified add path
-    roster-views.js      Student Roster and Teachers pages
+  server/
+    handler.js           Vercel-compatible protected API boundary
+    entra.js             Entra JWT and server Graph-token validation
+    authorization.js     Explicit AdminHubAccess resolution
+    graph-client.js      Fixed-resource app-only Graph client
 test/                    Node built-in test suite
 ```
 
@@ -87,50 +84,15 @@ and derives same-day minutes from Time In / Time Out when it is absent.
 ## Security notes
 
 This remains a client-side delegated Graph architecture. UI authorization is
-not row-level data security. The app does not add secrets and contains no
-browser-side application secret. Admin Hub is read-only against
-`IEP_Pace_Visits`. The follow-up workflow is switched off
-(`CONFIG.followUp.enabled`) until it has a SharePoint list to save to.
+not row-level data security. The app does not broaden SharePoint access, does
+not add secrets, and contains no browser-side application secret. Admin Hub is
+read-only against `IEP_Pace_Visits`; the demo follow-up state is separate,
+ synthetic browser-local state. Demo edits persist in the current browser until
+ the `Reset demo data` control is used; they never leave the browser.
 
-To add to the roster, Admin Hub requests `Sites.ReadWrite.All`, the same scope
-MAC-Walkthrough already uses on this shared app registration, so it gives
-signed-in users no SharePoint access they did not already have through MAC.
-Inside the app, `GRAPH.createListItem` refuses every list except
-`CONFIG.writableLists` (`IEP_Users2`, `IEP_Students_2026_27`), and Admin Hub
-has no update or delete operation at all.
+## PACE follow-up experiment
 
-## Roster
-
-Two pages under **Roster** in the sidebar. Anyone allowed into Admin Hub can
-use them; adds are refused unless the Admin Hub authorization decision allowed
-the user.
-
-- **Student Roster** adds a row to `IEP_Students_2026_27`, the list
-  MAC-Walkthrough, PACE and Daily Pulse read. It collects first name, last
-  name, teacher, an optional classroom, and Active / PACE Enabled / Daily
-  Pulse Enabled (only Active starts on). The teacher dropdown lists active
-  `IEP_Users2` teachers and saves the exact Teacher value existing students
-  already use for that person (for example `Bossons, A`), or `Last, F` for a
-  teacher with no students yet.
-- **Teachers** adds a row to `IEP_Users2` with Role = Teacher and Active = Yes,
-  plus a generated user id in Title. An email that already has a row is never
-  added again. Adding a teacher does not grant Admin Hub access.
-
-Each add follows MAC's rules. Nothing is sent until the whole roster has
-loaded. A student whose name is already on the roster (inactive included)
-needs a second confirmation. Every value is checked against the column's real
-type, and a required column the form does not fill blocks the save. The new
-row is then read back by its item id and compared field by field. If
-SharePoint refuses, nothing was saved and trying again is safe. If the
-connection drops mid-save, the result is reported as uncertain and is never
-retried automatically.
-
-Editing, deactivating, or reassigning existing students and users stays in
-MAC-Walkthrough.
-
-## PACE follow-up
-
-The source PACE visit is historical and immutable in this dashboard. The
+The source PACE visit is historical and immutable in this dashboard. The demo
 follow-up record is keyed by the PACE visit item ID and contains only:
 
 - Status: `Needs Review`, `In Review`, or `Follow-Up Complete`
@@ -139,11 +101,10 @@ follow-up record is keyed by the PACE visit item ID and contains only:
 - Follow-Up Note
 - Completed By / Completed At
 
-Follow-up is disabled by `CONFIG.followUp.enabled = false` in `src/config.js`.
-While it is off, the visit detail shows that follow-up is not yet connected and
-the overview hides the follow-up queue and counts. Enable it only after
-`IEP_Pace_Follow_Up` exists and the app can save to it; otherwise follow-up
-state would live only in browser memory and be lost on refresh.
+The seeded demo has 6 Needs Review, 3 In Review, and 7 Follow-Up Complete
+examples across 184 visits. The remaining 168 visits have no follow-up. Both
+fictional administrators and behavior specialists can perform the demo actions
+without a role matrix or real Microsoft identity.
 
 ## Proposed production follow-up data model
 
@@ -165,17 +126,45 @@ or reporting requirement proves it necessary. The PACE Visit Item ID should be
 the canonical relationship. Index `PACE Visit Item ID`, `Status`, and the
 date fields if production queue queries require them.
 
-## Deployment
+## Environments
 
-Admin Hub is a static site with no build step. Every load signs in through
-Microsoft Entra, checks `IEP_Users2` and `IEP_App_Users`, and reads
-`IEP_Pace_Visits` from the `IEP_Skook` SharePoint site through Microsoft Graph.
-The Roster pages also read `IEP_Students_2026_27` and `IEP_Users2` when opened.
+Admin Hub has two explicit build environments. The environment is written to
+`src/generated-environment.js` by `scripts/build-env.js`; it is never selected
+from a URL query string or browser storage.
 
-Sign-in redirects back to `window.location.origin`, so every address the app is
-served from (the Vercel URL and `http://localhost:4173` for local work) must be
-registered as a Single-page application redirect URI on the Entra app
-registration in `CONFIG.auth.clientId`.
+### DEMO
+
+- Synthetic data only.
+- No Microsoft authentication, Graph, SharePoint, or `IEP_App_Users` access.
+- Intended for stakeholder review and safe experimentation.
+- The Vercel demo project is hard-pinned to `npm run build:demo`.
+
+### PRODUCTION
+
+- Controlled Entra authentication.
+- Explicit Admin Hub/module authorization.
+- Real `IEP_Pace_Visits` SharePoint data.
+- Not deployed by this project setup.
+
+Changing or removing query parameters, editing localStorage/sessionStorage, or
+forcing Graph failures cannot switch a demo build into production. Unknown
+build environments fail closed.
+
+## Local environments
+
+```bash
+# Safe synthetic demo build and local server
+npm run build:demo
+npm start
+
+# Intentional production-capable build; do not share or deploy casually
+npm run build:production
+npm start
+```
+
+The checked-in generated environment is always safe demo mode. Run
+`npm run build:demo` again before returning the working tree to demo status
+after any local production build.
 
 ## Local run
 
@@ -191,10 +180,10 @@ service already owns port 4173, use `PORT=4174 npm start` and open
 
 ## Review screenshots
 
-- [Desktop review](review-desktop.png)
-- [iPad portrait review](review-ipad.png)
+- [Desktop demo review](review-desktop.png)
+- [iPad portrait demo review](review-ipad.png)
 
 ## Recommended next step
 
-Approve the `IEP_App_Users` authorization columns, then create
-`IEP_Pace_Follow_Up` and connect the follow-up workflow to it.
+Review the public synthetic demo with stakeholders before approving the four
+`IEP_App_Users` authorization columns for a future production deployment.

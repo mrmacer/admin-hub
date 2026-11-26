@@ -1,3 +1,13 @@
+import { APP_ENV, IS_DEMO } from "./environment.js";
+import { API_AUDIENCE as GENERATED_API_AUDIENCE, API_SCOPE as GENERATED_API_SCOPE, WRITE_ENABLED as GENERATED_WRITE_ENABLED } from "./generated-environment.js";
+
+export { APP_ENV };
+export const APP_MODE = APP_ENV;
+export const DEFAULT_PACE_RANGE_PRESET = "30";
+// Production writes remain disabled until approved Graph permissions, review
+// storage, and record-preservation controls have been verified.
+export const PRODUCTION_ADMIN_WRITES_ENABLED = GENERATED_WRITE_ENABLED === true;
+
 export const CONFIG = {
   appName: "Admin Hub",
   moduleName: "PACE Dashboard",
@@ -6,27 +16,26 @@ export const CONFIG = {
   auth: {
     clientId: "145a3fc7-5cff-4d03-96c7-577e17980110",
     authority: "https://login.microsoftonline.com/3276761c-22db-462b-a930-172d155bd795",
-    // Same scopes as MAC-Walkthrough, which shares this app registration.
-    scopes: ["User.Read", "Sites.ReadWrite.All"]
+    scopes: ["User.Read", "Sites.Read.All"]
   },
-  // The only lists Admin Hub may add rows to (the roster). It never edits or
-  // deletes, and every other list, PACE included, stays read-only.
-  writableLists: ["IEP_Users2", "IEP_Students_2026_27"],
+  api: {
+    basePath: "/api/admin/pace",
+    audience: GENERATED_API_AUDIENCE,
+    scope: GENERATED_API_SCOPE
+  },
+  demoStorageKey: "adminHubPaceDemoData",
+  followUp: { enabled: false },
   roster: {
-    // New students start Active only; PACE and Daily Pulse are opt-in, as in MAC-Walkthrough.
     studentDefaults: { active: true, paceEnabled: false, dailyPulseEnabled: false },
     teacherRole: "Teacher"
   },
-  // Follow-up stays off until the IEP_Pace_Follow_Up SharePoint list exists;
-  // until then follow-up state would only live in browser memory.
-  followUp: { enabled: false },
   authorization: {
-    // IEP_App_Users column that grants Admin Hub access. Shared with the
-    // MAC-Walkthrough Admin Panel, so one flag grants both.
-    permissionField: "Admin Panel",
-    // false = users with no IEP_App_Users row fall back to the active
-    // IEP_Users2 Administrator role. Turn on once every user has a row.
-    enforceAppUsers: false
+    enforceExplicitFlag: true,
+    adminHubFields: ["AdminHubAccess"],
+    paceDashboardFields: [],
+    // This is intentionally not an authorization field. Admin Panel is a MAC
+    // permission and must never silently grant Admin Hub access.
+    excludedLegacyFields: ["Admin Panel"]
   },
   paceFieldAliases: {
     student: ["Student", "Student Name", "StudentName", "studentName"],
@@ -48,6 +57,5 @@ export const CONFIG = {
 };
 
 export const MODULES = [
-  { id: "pace", label: "PACE", description: "Visits, usage patterns, duration, interventions, activity and follow-up.", active: true },
-  { id: "roster", label: "Roster", description: "Add students and teachers to the IEP Skook roster.", active: true }
+  { id: "pace", label: "PACE", description: "Visits, usage patterns, duration, interventions, activity and follow-up.", active: true }
 ];

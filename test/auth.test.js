@@ -33,28 +33,19 @@ test("only interaction-required errors count as needing sign-in", () => {
   assert.equal(needsInteraction(new Error("Failed to fetch")), false);
 });
 
-test("a non-interaction token error is rethrown without redirecting", async () => {
+test("demo Graph access is blocked without attempting token acquisition", async () => {
   const client = fakeClient({ silent: async () => { throw new Error("network down"); } });
   AUTH.client = client; AUTH.account = { username: "a@iu29.org" };
-  await assert.rejects(() => AUTH.acquireGraphToken(), /network down/);
+  await assert.rejects(() => AUTH.acquireGraphToken(), /disabled outside production/);
   assert.equal(client.calls.redirects, 0);
 });
 
-test("an interaction-required token error redirects once and never resolves", async () => {
-  const client = fakeClient({ silent: async () => { throw new InteractionRequiredAuthError(); } });
-  AUTH.client = client; AUTH.account = { username: "a@iu29.org" };
-  const outcome = await Promise.race([AUTH.acquireGraphToken().then(() => "resolved"), new Promise(resolve => setTimeout(() => resolve("pending"), 20))]);
-  assert.equal(outcome, "pending");
-  assert.equal(client.calls.redirects, 1);
-});
-
-test("a failed or cancelled sign-in shows a message instead of throwing", async () => {
-  const client = fakeClient({ redirectError: new Error("user_cancelled") });
-  global.window = { msal: { PublicClientApplication: function () { return client; } }, location: { origin: "https://example.test" } };
+test("demo builds do not attempt sign-in", async () => {
   Object.assign(AUTH, { client: null, account: null, staff: null, error: null, signInError: null });
-  await AUTH.init();
+  const result = await AUTH.init();
+  assert.deepEqual(result, { skipped: true });
   assert.equal(AUTH.account, null);
-  assert.match(AUTH.signInError, /did not complete/);
+  assert.equal(AUTH.signInError, null);
 });
 
 test("user lookup asks SharePoint for one email and only reads the whole list as a fallback", async () => {
