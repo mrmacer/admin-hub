@@ -13,11 +13,12 @@ import { isIntentionalModalDismissal } from "./modal.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
-const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, adminReviews: {}, adminReviewsSeeded: false, demoSnapshotLoaded: false, adminEtags: {}, production: { apiReady: ADMIN_API.configured, writesEnabled: ADMIN_API.writesEnabled }, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, editorDraft: null, mutationError: "" };
+const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, adminReviews: {}, adminReviewsSeeded: false, demoSnapshotLoaded: false, adminEtags: {}, production: { apiReady: ADMIN_API.configured, writesEnabled: ADMIN_API.writesEnabled }, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, modalMode: "detail", flagOpen: false, noteOpen: false, historyOpen: false, moreOpen: false, editorDraft: null, mutationError: "", mutationNotice: "" };
 
 function paint() {
-  if (state.activeVisitId && root.querySelector(".modal")) state.editorDraft = captureEditorDraft();
+  if (state.activeVisitId && state.modalMode === "edit" && root.querySelector("#adminStudent")) state.editorDraft = captureEditorDraft();
   root.innerHTML = renderApp(state);
+  document.body.classList.toggle("modal-open", Boolean(state.activeVisitId));
   restoreEditorDraft();
 }
 
@@ -34,7 +35,7 @@ function persistDemoSnapshot() {
 function resetDemoSnapshot() {
   if (!state.demo) return;
   try { globalThis.localStorage?.removeItem(CONFIG.demoStorageKey); } catch { /* Browser storage is optional for the demo. */ }
-  PACE_DATA.clear(); state.visits = []; state.followUps = {}; state.followUpsSeeded = false; state.adminReviews = {}; state.adminReviewsSeeded = false; state.demoSnapshotLoaded = false; state.activeVisitId = null; state.editorDraft = null; state.mutationError = "";
+  PACE_DATA.clear(); state.visits = []; state.followUps = {}; state.followUpsSeeded = false; state.adminReviews = {}; state.adminReviewsSeeded = false; state.demoSnapshotLoaded = false; state.activeVisitId = null; state.modalMode = "detail"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = "";
 }
 
 async function loadMsalForProduction() {
@@ -80,6 +81,13 @@ function captureEditorDraft() {
     voidReason: value("adminVoidReason"),
     followUpNote: value("followUpNote")
   };
+}
+
+function hasUnsavedEdit(activeVisit) {
+  if (!activeVisit || !root.querySelector("#adminStudent")) return false;
+  const draft = readEditDraft();
+  const baseline = { student: activeVisit.student, date: activeVisit.date, teacherCameFrom: activeVisit.teacherCameFrom, room: activeVisit.room, specialists: activeVisit.specialists.join(", "), timeIn: activeVisit.timeIn, timeOut: activeVisit.timeOut, reasons: activeVisit.reasons.join(", "), interventions: activeVisit.interventions.join(", "), scmUsed: activeVisit.scmUsed === null ? "" : activeVisit.scmUsed ? "true" : "false", notes: activeVisit.notes, returnStatus: activeVisit.returnStatus };
+  return Object.keys(baseline).some(key => String(draft[key] ?? "") !== String(baseline[key] ?? "")) || Boolean(root.querySelector("#adminCorrectionReason")?.value.trim());
 }
 
 function restoreEditorDraft() {
@@ -164,6 +172,24 @@ async function boot() {
 }
 
 document.addEventListener("click", async event => {
+  const modalAction = event.target.closest("[data-modal-action]");
+  if (modalAction) {
+    const action = modalAction.dataset.modalAction;
+    const activeVisit = state.visits.find(item => item.id === state.activeVisitId);
+    if (action === "edit") { state.modalMode = "edit"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; paint(); return; }
+    if (action === "detail") {
+      if (state.modalMode === "edit" && hasUnsavedEdit(activeVisit) && !window.confirm("Discard unsaved correction changes?")) return;
+      state.modalMode = "detail"; state.editorDraft = null; state.mutationError = ""; paint(); return;
+    }
+    if (action === "cancel-edit") {
+      if (hasUnsavedEdit(activeVisit) && !window.confirm("Discard unsaved correction changes?")) return;
+      state.modalMode = "detail"; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; paint(); return;
+    }
+    if (action === "flag") { state.flagOpen = true; state.noteOpen = false; state.mutationError = ""; paint(); return; }
+    if (action === "close-flag") { state.flagOpen = false; state.editorDraft = null; paint(); return; }
+    if (action === "add-note") { state.noteOpen = true; state.flagOpen = false; state.mutationError = ""; paint(); return; }
+    if (action === "close-note") { state.noteOpen = false; state.editorDraft = null; paint(); return; }
+  }
   const adminAction = event.target.closest("[data-admin-action]");
   if (adminAction) {
     const activeVisit = state.visits.find(item => item.id === state.activeVisitId);
@@ -174,6 +200,7 @@ document.addEventListener("click", async event => {
         await handleProductionAction(action, activeVisit);
         state.mutationError = "";
         state.editorDraft = null;
+        if (action === ADMIN_MUTATION_ACTIONS.EDIT) { state.modalMode = "detail"; state.mutationNotice = "Correction saved successfully."; }
         paint();
         return;
       }
@@ -181,7 +208,7 @@ document.addEventListener("click", async event => {
       if (action === ADMIN_MUTATION_ACTIONS.EDIT) {
         const reason = root.querySelector("#adminCorrectionReason")?.value ?? "";
         const result = applyDemoEdit(state.visits, activeVisit.id, readEditDraft(), { ...adminContext(reason), expectedVersion: activeVisit.adminVersion ?? 1 });
-        state.visits = result.visits; state.adminReviews = recordDemoEdit(state.adminReviews, activeVisit.id, { ...adminContext(result.reason), at: result.at }); state.mutationError = "";
+        state.visits = result.visits; state.adminReviews = recordDemoEdit(state.adminReviews, activeVisit.id, { ...adminContext(result.reason), at: result.at, fields: result.fields, previous: result.previous, updated: result.visit }); state.mutationError = "";
       } else if (action === ADMIN_MUTATION_ACTIONS.REVIEW) {
         const status = root.querySelector("#adminReviewStatus")?.value ?? "";
         const reviewReason = root.querySelector("#adminReviewReason")?.value ?? "";
@@ -199,7 +226,19 @@ document.addEventListener("click", async event => {
         state.adminReviews = voidDemoVisit(state.adminReviews, activeVisit.id, adminContext(reason)); state.mutationError = "";
       } else if (action === ADMIN_MUTATION_ACTIONS.RESTORE) {
         state.adminReviews = restoreDemoVisit(state.adminReviews, activeVisit.id, adminContext("Submission restored")); state.mutationError = "";
+      } else if (action === "save-flag") {
+        const reason = root.querySelector("#adminReviewReason")?.value ?? "";
+        const assignedTo = root.querySelector("#adminFollowUpAssignedTo")?.value ?? "";
+        const dueDate = root.querySelector("#adminFollowUpDueDate")?.value ?? "";
+        state.adminReviews = saveDemoReview(state.adminReviews, activeVisit.id, { status: REVIEW_STATUS.NEEDS_FOLLOW_UP, followUpStatus: "open", followUpAssignedTo: assignedTo, followUpDueDate: dueDate, reason }, { ...adminContext(reason || "Flagged for review"), sourceVersion: activeVisit.adminVersion ?? 1 });
+        if (!state.followUps[activeVisit.id]) state.followUps = applyFollowUpAction(state.followUps, activeVisit, "flag", { actor: state.userName || "Demo Administrator", date: localDateString() });
       }
+      if (action === ADMIN_MUTATION_ACTIONS.EDIT) { state.modalMode = "detail"; state.mutationNotice = "Correction saved successfully."; }
+      if (action === "save-flag") { state.flagOpen = false; state.mutationNotice = "Review flag saved."; }
+      if (action === ADMIN_MUTATION_ACTIONS.MARK_VIEWED) state.mutationNotice = "Marked as viewed. Any review flag remains active.";
+      if (action === ADMIN_MUTATION_ACTIONS.ADD_NOTE) { state.noteOpen = false; state.mutationNotice = "Administrative note added."; }
+      if (action === ADMIN_MUTATION_ACTIONS.VOID) { state.moreOpen = false; state.mutationNotice = "Submission voided; the original record remains preserved."; }
+      if (action === ADMIN_MUTATION_ACTIONS.RESTORE) { state.moreOpen = false; state.mutationNotice = "Submission restored."; }
       state.editorDraft = null;
       persistDemoSnapshot();
       paint();
@@ -219,18 +258,18 @@ document.addEventListener("click", async event => {
     const note = root.querySelector("#followUpNote")?.value ?? "";
     const action = followUpAction.dataset.followUpAction;
     const actor = action === "start-review" ? "Morgan Reed — Behavior Specialist" : "Jordan Ellis — Administrator";
-    try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); state.editorDraft = null; persistDemoSnapshot(); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); }
+    try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); state.editorDraft = null; state.mutationNotice = action === "complete" ? "Follow-up completed." : "Review started."; persistDemoSnapshot(); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); }
     return;
   }
-  if (isIntentionalModalDismissal(event.target)) { state.activeVisitId = null; state.editorDraft = null; paint(); return; }
+  if (isIntentionalModalDismissal(event.target)) { state.activeVisitId = null; state.modalMode = "detail"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; paint(); return; }
   if (event.target.closest("#resetDemo")) {
     if (!window.confirm("Reset all synthetic demo edits, notes, reviews and follow-up state? This affects only this browser.")) return;
     resetDemoSnapshot(); await loadData(true); return;
   }
   const openVisit = event.target.closest("[data-open-visit]");
-  if (openVisit) { state.activeVisitId = openVisit.dataset.openVisit; state.editorDraft = null; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); } } return; }
+  if (openVisit) { state.activeVisitId = openVisit.dataset.openVisit; state.modalMode = "detail"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); } } return; }
   const visit = event.target.closest("[data-visit]");
-  if (visit) { state.activeVisitId = visit.dataset.visit; state.editorDraft = null; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); } } return; }
+  if (visit) { state.activeVisitId = visit.dataset.visit; state.modalMode = "detail"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; paint(); if (!state.demo && ADMIN_API.configured) { try { await hydrateProductionVisit(state.activeVisitId); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); } } return; }
   const student = event.target.closest("[data-student]");
   if (student && !event.target.closest("a")) { go(`pace/students/${encodeURIComponent(student.dataset.student)}`); return; }
   const sort = event.target.closest("[data-sort]");
@@ -240,7 +279,7 @@ document.addEventListener("click", async event => {
 });
 
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape" && state.activeVisitId) { state.activeVisitId = null; state.editorDraft = null; paint(); return; }
+  if (event.key === "Escape" && state.activeVisitId) { if (state.modalMode === "edit" && hasUnsavedEdit(state.visits.find(item => item.id === state.activeVisitId)) && !window.confirm("Discard unsaved correction changes?")) return; state.activeVisitId = null; state.modalMode = "detail"; state.editorDraft = null; paint(); return; }
   const viewport = event.target?.closest?.(".trend-chart-viewport");
   if (!viewport || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
   viewport.scrollLeft += event.key === "ArrowRight" ? 120 : -120;

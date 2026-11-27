@@ -173,7 +173,7 @@ export function markDemoViewed(reviews, visitId, context = {}) {
 
 export function recordDemoEdit(reviews, visitId, context = {}) {
   const administrator = actor(context); const at = now(context);
-  return updateReview(reviews, visitId, {}, { action: ADMIN_MUTATION_ACTIONS.EDIT, actor: administrator, at, reason: String(context.reason ?? "Synthetic correction").trim() || "Synthetic correction" });
+  return updateReview(reviews, visitId, {}, { action: ADMIN_MUTATION_ACTIONS.EDIT, actor: administrator, at, reason: String(context.reason ?? "Synthetic correction").trim() || "Synthetic correction", fields: copy(context.fields ?? []), previous: copy(context.previous), updated: copy(context.updated) });
 }
 
 export function adminNotesFor(reviews, visitId) { return copy(adminReviewFor(reviews, visitId).notes ?? []); }

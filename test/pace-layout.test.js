@@ -32,6 +32,25 @@ test("a source change after review is visibly marked for re-review", () => {
   assert.match(html, /changed after it was reviewed/);
 });
 
+test("PACE visit detail is read-only first and exposes dedicated administrative sections", () => {
+  const visit = visits[0];
+  const review = { [visit.id]: { visitId: visit.id, status: "unreviewed", sourceVersion: 1, notes: [], followUpStatus: "open", history: [] } };
+  const detail = renderOverview([visit], dateRangeForPreset("30", "2026-11-12"), {}, visit, true, {}, review);
+  assert.match(detail, /modal-header/);
+  assert.match(detail, /Effective submission/);
+  assert.match(detail, /Need to Edit Submission\?/);
+  assert.match(detail, /Administrative History/);
+  assert.match(detail, /More Administrative Actions/);
+  assert.match(detail, /Flag for Review/);
+  assert.match(detail, /Mark as Viewed/);
+  assert.doesNotMatch(detail, /id="adminStudent"/);
+
+  const edit = renderOverview([visit], dateRangeForPreset("30", "2026-11-12"), {}, visit, true, {}, review, "", {}, { modalMode: "edit" });
+  assert.match(edit, /id="adminStudent"/);
+  assert.match(edit, /Save Correction/);
+  assert.doesNotMatch(edit, /Need to Edit Submission\?/);
+});
+
 test("explicitly selected ranges remain supported", () => {
   const sevenDays = dateRangeForPreset("7", "2026-11-12");
   const fakeControl = { querySelector(selector) { return selector === "#datePreset" ? { value: "7" } : null; } };
