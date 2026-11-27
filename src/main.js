@@ -177,6 +177,10 @@ document.addEventListener("click", async event => {
     const action = modalAction.dataset.modalAction;
     const activeVisit = state.visits.find(item => item.id === state.activeVisitId);
     if (action === "edit") { state.modalMode = "edit"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; paint(); return; }
+    if (["review", "flag"].includes(action)) { state.modalMode = "review"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; paint(); return; }
+    if (["notes", "add-note"].includes(action)) { state.modalMode = "notes"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; paint(); return; }
+    if (action === "history") { state.modalMode = "history"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; paint(); return; }
+    if (action === "more") { state.modalMode = "more"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; paint(); return; }
     if (action === "detail") {
       if (state.modalMode === "edit" && hasUnsavedEdit(activeVisit) && !window.confirm("Discard unsaved correction changes?")) return;
       state.modalMode = "detail"; state.editorDraft = null; state.mutationError = ""; paint(); return;
@@ -185,10 +189,8 @@ document.addEventListener("click", async event => {
       if (hasUnsavedEdit(activeVisit) && !window.confirm("Discard unsaved correction changes?")) return;
       state.modalMode = "detail"; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; paint(); return;
     }
-    if (action === "flag") { state.flagOpen = true; state.noteOpen = false; state.mutationError = ""; paint(); return; }
-    if (action === "close-flag") { state.flagOpen = false; state.editorDraft = null; paint(); return; }
-    if (action === "add-note") { state.noteOpen = true; state.flagOpen = false; state.mutationError = ""; paint(); return; }
-    if (action === "close-note") { state.noteOpen = false; state.editorDraft = null; paint(); return; }
+    if (action === "close-flag") { state.modalMode = "detail"; state.flagOpen = false; state.editorDraft = null; paint(); return; }
+    if (action === "close-note") { state.modalMode = "detail"; state.noteOpen = false; state.editorDraft = null; paint(); return; }
   }
   const adminAction = event.target.closest("[data-admin-action]");
   if (adminAction) {
@@ -234,11 +236,11 @@ document.addEventListener("click", async event => {
         if (!state.followUps[activeVisit.id]) state.followUps = applyFollowUpAction(state.followUps, activeVisit, "flag", { actor: state.userName || "Demo Administrator", date: localDateString() });
       }
       if (action === ADMIN_MUTATION_ACTIONS.EDIT) { state.modalMode = "detail"; state.mutationNotice = "Correction saved successfully."; }
-      if (action === "save-flag") { state.flagOpen = false; state.mutationNotice = "Review flag saved."; }
+      if (action === "save-flag") { state.modalMode = "detail"; state.flagOpen = false; state.mutationNotice = "Review flag saved."; }
       if (action === ADMIN_MUTATION_ACTIONS.MARK_VIEWED) state.mutationNotice = "Marked as viewed. Any review flag remains active.";
-      if (action === ADMIN_MUTATION_ACTIONS.ADD_NOTE) { state.noteOpen = false; state.mutationNotice = "Administrative note added."; }
-      if (action === ADMIN_MUTATION_ACTIONS.VOID) { state.moreOpen = false; state.mutationNotice = "Submission voided; the original record remains preserved."; }
-      if (action === ADMIN_MUTATION_ACTIONS.RESTORE) { state.moreOpen = false; state.mutationNotice = "Submission restored."; }
+      if (action === ADMIN_MUTATION_ACTIONS.ADD_NOTE) { state.modalMode = "detail"; state.noteOpen = false; state.mutationNotice = "Administrative note added."; }
+      if (action === ADMIN_MUTATION_ACTIONS.VOID) { state.modalMode = "detail"; state.moreOpen = false; state.mutationNotice = "Submission voided; the original record remains preserved."; }
+      if (action === ADMIN_MUTATION_ACTIONS.RESTORE) { state.modalMode = "detail"; state.moreOpen = false; state.mutationNotice = "Submission restored."; }
       state.editorDraft = null;
       persistDemoSnapshot();
       paint();
@@ -258,10 +260,10 @@ document.addEventListener("click", async event => {
     const note = root.querySelector("#followUpNote")?.value ?? "";
     const action = followUpAction.dataset.followUpAction;
     const actor = action === "start-review" ? "Morgan Reed — Behavior Specialist" : "Jordan Ellis — Administrator";
-    try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); state.editorDraft = null; state.mutationNotice = action === "complete" ? "Follow-up completed." : "Review started."; persistDemoSnapshot(); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); }
+    try { state.followUps = applyFollowUpAction(state.followUps, activeVisit, action, { actor, date: localDateString(), note }); state.modalMode = "detail"; state.editorDraft = null; state.mutationNotice = action === "complete" ? "Follow-up completed." : "Review started."; persistDemoSnapshot(); paint(); } catch (error) { state.editorDraft = captureEditorDraft(); state.mutationError = error.message; paint(); }
     return;
   }
-  if (isIntentionalModalDismissal(event.target)) { state.activeVisitId = null; state.modalMode = "detail"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; paint(); return; }
+  if (isIntentionalModalDismissal(event.target)) { if (state.modalMode === "edit" && hasUnsavedEdit(state.visits.find(item => item.id === state.activeVisitId)) && !window.confirm("Discard unsaved correction changes?")) return; state.activeVisitId = null; state.modalMode = "detail"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; paint(); return; }
   if (event.target.closest("#resetDemo")) {
     if (!window.confirm("Reset all synthetic demo edits, notes, reviews and follow-up state? This affects only this browser.")) return;
     resetDemoSnapshot(); await loadData(true); return;
@@ -279,7 +281,12 @@ document.addEventListener("click", async event => {
 });
 
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape" && state.activeVisitId) { if (state.modalMode === "edit" && hasUnsavedEdit(state.visits.find(item => item.id === state.activeVisitId)) && !window.confirm("Discard unsaved correction changes?")) return; state.activeVisitId = null; state.modalMode = "detail"; state.editorDraft = null; paint(); return; }
+  if (event.key === "Escape" && state.activeVisitId) {
+    if (state.modalMode === "edit" && hasUnsavedEdit(state.visits.find(item => item.id === state.activeVisitId)) && !window.confirm("Discard unsaved correction changes?")) return;
+    if (state.modalMode === "edit") { state.activeVisitId = null; state.modalMode = "detail"; state.editorDraft = null; state.mutationError = ""; paint(); return; }
+    if (state.modalMode !== "detail") { state.modalMode = "detail"; state.editorDraft = null; state.mutationError = ""; paint(); return; }
+    state.activeVisitId = null; state.modalMode = "detail"; state.editorDraft = null; paint(); return;
+  }
   const viewport = event.target?.closest?.(".trend-chart-viewport");
   if (!viewport || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
   viewport.scrollLeft += event.key === "ArrowRight" ? 120 : -120;

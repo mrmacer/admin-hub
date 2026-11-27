@@ -21,7 +21,7 @@ test("follow-up stays off until its SharePoint list exists", () => {
   const overview = renderOverview(visits, range, {}, null);
   assert.doesNotMatch(overview, /data-follow-up-action/);
   const modal = renderStudentDetail(visits, range, "Alex", {}, visits[0]);
-  assert.match(modal, /Synthetic changes use the stable visit ID/);
+  assert.match(modal, /Original submission preserved/);
   assert.match(modal, /data-follow-up-action="flag"/);
 });
 

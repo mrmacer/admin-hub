@@ -37,18 +37,42 @@ test("PACE visit detail is read-only first and exposes dedicated administrative 
   const review = { [visit.id]: { visitId: visit.id, status: "unreviewed", sourceVersion: 1, notes: [], followUpStatus: "open", history: [] } };
   const detail = renderOverview([visit], dateRangeForPreset("30", "2026-11-12"), {}, visit, true, {}, review);
   assert.match(detail, /modal-header/);
-  assert.match(detail, /Effective submission/);
+  assert.match(detail, /Visit summary/);
   assert.match(detail, /Need to Edit Submission\?/);
-  assert.match(detail, /Administrative History/);
-  assert.match(detail, /More Administrative Actions/);
+  assert.match(detail, /Record History/);
+  assert.match(detail, /More Actions/);
   assert.match(detail, /Flag for Review/);
   assert.match(detail, /Mark as Viewed/);
+  assert.doesNotMatch(detail, /id="adminReviewReason"/);
   assert.doesNotMatch(detail, /id="adminStudent"/);
 
   const edit = renderOverview([visit], dateRangeForPreset("30", "2026-11-12"), {}, visit, true, {}, review, "", {}, { modalMode: "edit" });
   assert.match(edit, /id="adminStudent"/);
   assert.match(edit, /Save Correction/);
   assert.doesNotMatch(edit, /Need to Edit Submission\?/);
+});
+
+test("status combinations prioritize attention and keep viewed metadata secondary", () => {
+  const visit = visits[0];
+  const flaggedReview = { [visit.id]: { visitId: visit.id, status: "needs-follow-up", sourceVersion: 1, notes: [], followUpStatus: "open", history: [] } };
+  const flagged = { [visit.id]: { visitId: visit.id, status: "needs-review", flaggedBy: "Demo Administrator", flaggedAt: "2026-11-12T09:00:00.000Z" } };
+  const flaggedHtml = renderOverview([visit], dateRangeForPreset("30", "2026-11-12"), flagged, visit, true, {}, flaggedReview);
+  assert.match(flaggedHtml, /status-needs">Needs Review/);
+  assert.match(flaggedHtml, /Not viewed/);
+  assert.match(flaggedHtml, /Follow-up requested/);
+  const reviewedHtml = renderOverview([visit], dateRangeForPreset("30", "2026-11-12"), {}, visit, true, {}, { [visit.id]: { visitId: visit.id, status: "reviewed", sourceVersion: 1, notes: [], followUpStatus: "open", history: [] } });
+  assert.match(reviewedHtml, /status-complete">Reviewed/);
+  assert.match(reviewedHtml, /status-meta">Viewed/);
+});
+
+test("visit detail routes each administrative task to an isolated view", () => {
+  const visit = visits[0];
+  const reviews = { [visit.id]: { visitId: visit.id, status: "unreviewed", sourceVersion: 1, notes: [], followUpStatus: "open", history: [] } };
+  for (const [mode, marker] of [["review", "REVIEW &amp; FOLLOW-UP"], ["edit", "EDIT SUBMISSION"], ["notes", "ADMINISTRATIVE NOTES"], ["history", "RECORD HISTORY"], ["more", "MORE ACTIONS"]]) {
+    const html = renderOverview([visit], dateRangeForPreset("30", "2026-11-12"), {}, visit, true, {}, reviews, "", {}, { modalMode: mode });
+    assert.match(html, new RegExp(marker));
+    assert.match(html, /Back to Visit/);
+  }
 });
 
 test("explicitly selected ranges remain supported", () => {

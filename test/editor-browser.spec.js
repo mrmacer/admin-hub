@@ -58,18 +58,31 @@ test("editor supports mobile interaction, intentional Escape dismissal, and a su
   await expect(page.locator(".admin-error")).toHaveCount(0);
 });
 
-test("detail actions support review flags and separate administrative notes", async ({ page }) => {
+test("dedicated task views support review flags, notes, history and secondary actions", async ({ page }) => {
   const dialog = await openDetail(page);
-  await dialog.locator('[data-modal-action="flag"]').click();
+  await dialog.getByRole("button", { name: "Manage Review" }).click();
+  await expect(dialog.locator(".task-view-review")).toBeVisible();
   await dialog.locator("#adminReviewReason").fill("Browser review flag");
   await dialog.locator("#adminFollowUpAssignedTo").fill("Morgan Reed");
   await dialog.locator("#adminFollowUpDueDate").fill("2026-11-30");
   await dialog.locator('[data-admin-action="save-flag"]').click();
   await expect(dialog.locator(".modal-statuses")).toContainText("Needs Review");
-  await expect(dialog.locator(".follow-up-summary")).toContainText("Needs Review");
+  await expect(dialog.locator(".review-section")).toContainText("Needs Review");
 
-  await dialog.locator('[data-modal-action="add-note"]').click();
+  await dialog.locator('[data-modal-action="notes"]').click();
+  await expect(dialog.locator(".task-view-notes")).toBeVisible();
   await dialog.locator("#adminNoteText").fill("Browser administrative note");
   await dialog.locator('[data-admin-action="add-note"]').click();
+  await expect(dialog.locator(".visit-summary-section")).toBeVisible();
+  await dialog.getByRole("button", { name: /Administrative Notes/ }).click();
   await expect(dialog.locator(".admin-note-row").filter({ hasText: "Browser administrative note" })).toBeVisible();
+  await dialog.getByRole("button", { name: /Back to Visit/ }).click();
+
+  await dialog.locator('[data-modal-action="history"]').click();
+  await expect(dialog.locator(".task-view-history")).toBeVisible();
+  await dialog.getByRole("button", { name: /Back to Visit/ }).click();
+  await dialog.locator('[data-modal-action="more"]').click();
+  await expect(dialog.locator(".task-view-void")).toBeVisible();
+  await dialog.locator('[data-modal-action="detail"]').click();
+  await expect(dialog.locator(".visit-summary-section")).toBeVisible();
 });
