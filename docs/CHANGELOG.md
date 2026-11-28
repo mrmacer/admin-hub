@@ -70,6 +70,62 @@ The protected synthetic demo remains separate:
 
 The production recovery release did not deploy to or modify the demo target.
 
+## 2026-11-27 — Admin Hub v1.4 synthetic directory demo release
+
+Released the Student Roster and Teachers & Staff directory experience to the
+protected synthetic demo environment. The release is intentionally demo-only:
+directory records, edits, lifecycle changes, and history remain browser-local
+and do not read or write SharePoint.
+
+### Directory capabilities
+
+- Student roster overview with search, status filtering, sorting, and counts.
+- Student and staff profiles with linked synthetic PACE activity.
+- Synthetic add and edit workflows with required-field validation and duplicate
+  warnings.
+- Active/inactive lifecycle controls with preserved directory history and no
+  hard deletion.
+- Browser-local persistence through the existing demo snapshot and Reset Demo
+  Data support.
+- Responsive layouts with no page-level horizontal overflow.
+- Directory roles remain descriptive and cannot grant Admin Hub authorization;
+  `IEP_App_Users` remains the future authorization source of truth.
+
+### Verification
+
+- 92/92 unit tests passed.
+- 5/5 browser tests passed, including existing PACE editor regressions and new
+  directory workflow coverage.
+- JavaScript syntax checks, `git diff --check`, `npm run build:production`,
+  and `npm run build:demo` passed.
+- Generated configuration restored to `APP_ENV = "demo"`, blank API audience
+  and scope, and `WRITE_ENABLED = false`.
+- Local visual review completed with synthetic data only; screenshots and
+  findings are in `docs/visual-review/ADMIN_HUB_V14_DIRECTORY_REVIEW.md`.
+
+### Demo deployment
+
+- Branch: `dev`
+- Vercel project: `admin-hub-demo`
+- Project ID: `prj_iDI1pJgoc8mODhUBnlRDVJGKPA1B`
+- Build: `npm run build:demo`
+- URL: <https://admin-hub-demo.vercel.app>
+- Production SharePoint integration, Microsoft Entra configuration, and
+  application entitlements were unchanged.
+
+### Known limitations and blockers
+
+- Live directory schema, indexes, permissions, and authoritative immutable IDs
+  still require technology-admin verification.
+- The demo links synthetic PACE activity by display name for review only;
+  production history must use verified source IDs before rename support.
+- A protected server-side directory adapter, selected SharePoint permissions,
+  audit protection, no-delete enforcement, and authenticated approval are still
+  required before production integration.
+
+See `docs/STUDENT_STAFF_DIRECTORY_INTEGRATION.md` for the field-mapping
+boundary and remaining production requirements.
+
 ## 2026-11-25 — Earlier Admin Hub work retained
 
 The production baseline includes the earlier local application milestones:

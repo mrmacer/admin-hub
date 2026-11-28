@@ -10,16 +10,20 @@ import { normalizeVisit } from "./modules/pace/pace-analytics.js";
 import { ADMIN_MUTATION_ACTIONS, REVIEW_STATUS, addDemoAdminNote, applyDemoEdit, markDemoViewed, recordDemoEdit, restoreDemoVisit, saveDemoReview, seedAdminReviews, voidDemoVisit } from "./modules/pace/pace-admin.js";
 import { ADMIN_API } from "./admin-api.js";
 import { isIntentionalModalDismissal } from "./modal.js";
+import { addDirectoryRecord, createDemoDirectory, directorySnapshot, normalizeDirectory, recordDirectoryChange } from "./modules/directory/directory-data.js";
+import { staffDuplicateMatches, studentDuplicateMatches, validateStaffDraft, validateStudentDraft } from "./modules/directory/directory-model.js";
 
 const root = document.querySelector("#app");
 let AUTH = null; let GRAPH = null; let APP_USERS = null;
-const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, adminReviews: {}, adminReviewsSeeded: false, demoSnapshotLoaded: false, adminEtags: {}, production: { apiReady: ADMIN_API.configured, writesEnabled: ADMIN_API.writesEnabled }, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, modalMode: "detail", flagOpen: false, noteOpen: false, historyOpen: false, moreOpen: false, editorDraft: null, mutationError: "", mutationNotice: "" };
+const state = { demo: APP_ENV === "demo", range: dateRangeForPreset(DEFAULT_PACE_RANGE_PRESET), visits: [], followUps: {}, followUpsSeeded: false, adminReviews: {}, adminReviewsSeeded: false, directory: { students: [], staff: [], migratedFrom: null }, directorySeeded: false, demoSnapshotLoaded: false, adminEtags: {}, production: { apiReady: ADMIN_API.configured, writesEnabled: ADMIN_API.writesEnabled }, userName: "", studentsSearch: "", studentsSort: "visits", activityFilters: {}, activeVisitId: null, modalMode: "detail", flagOpen: false, noteOpen: false, historyOpen: false, moreOpen: false, editorDraft: null, mutationError: "", mutationNotice: "", directoryUi: { search: "", status: "", role: "", sortField: "name", sortDirection: "asc", task: null, draft: null, notice: null, duplicate: "", allowDuplicate: false } };
 
 function paint() {
   if (state.activeVisitId && state.modalMode === "edit" && root.querySelector("#adminStudent")) state.editorDraft = captureEditorDraft();
+  if (state.directoryUi.task && root.querySelector("[data-directory-form]")) state.directoryUi.draft = captureDirectoryDraft();
   root.innerHTML = renderApp(state);
   document.body.classList.toggle("modal-open", Boolean(state.activeVisitId));
   restoreEditorDraft();
+  restoreDirectoryDraft();
 }
 
 function readDemoSnapshot() {
@@ -29,13 +33,13 @@ function readDemoSnapshot() {
 
 function persistDemoSnapshot() {
   if (!state.demo || !globalThis.localStorage) return;
-  try { globalThis.localStorage.setItem(CONFIG.demoStorageKey, JSON.stringify({ visits: state.visits, followUps: state.followUps, adminReviews: state.adminReviews })); } catch { /* Browser storage is optional for the demo. */ }
+  try { globalThis.localStorage.setItem(CONFIG.demoStorageKey, JSON.stringify({ visits: state.visits, followUps: state.followUps, adminReviews: state.adminReviews, directory: directorySnapshot(state.directory) })); } catch { /* Browser storage is optional for the demo. */ }
 }
 
 function resetDemoSnapshot() {
   if (!state.demo) return;
   try { globalThis.localStorage?.removeItem(CONFIG.demoStorageKey); } catch { /* Browser storage is optional for the demo. */ }
-  PACE_DATA.clear(); state.visits = []; state.followUps = {}; state.followUpsSeeded = false; state.adminReviews = {}; state.adminReviewsSeeded = false; state.demoSnapshotLoaded = false; state.activeVisitId = null; state.modalMode = "detail"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = "";
+  PACE_DATA.clear(); state.visits = []; state.followUps = {}; state.followUpsSeeded = false; state.adminReviews = {}; state.adminReviewsSeeded = false; state.directory = { students: [], staff: [], migratedFrom: null }; state.directorySeeded = false; state.demoSnapshotLoaded = false; state.activeVisitId = null; state.modalMode = "detail"; state.flagOpen = false; state.noteOpen = false; state.editorDraft = null; state.mutationError = ""; state.mutationNotice = ""; state.directoryUi = { search: "", status: "", role: "", sortField: "name", sortDirection: "asc", task: null, draft: null, notice: null, duplicate: "", allowDuplicate: false };
 }
 
 async function loadMsalForProduction() {
@@ -56,6 +60,7 @@ async function loadData(force = false) {
   const result = await PACE_DATA.load(state.range, force); state.visits = result.visits.map(visit => state.demo && (priorVisits.get(visit.id) ?? savedVisits.get(visit.id) ?? visit));
   if (state.demo && !state.followUpsSeeded) { state.followUps = saved?.followUps ?? seedFollowUps(state.visits); state.followUpsSeeded = true; }
   if (state.demo && !state.adminReviewsSeeded) { state.adminReviews = saved?.adminReviews ?? seedAdminReviews(state.visits); state.adminReviewsSeeded = true; }
+  if (state.demo && !state.directorySeeded) { state.directory = normalizeDirectory(saved?.directory, state.visits); state.directorySeeded = true; }
   state.demoSnapshotLoaded = true; persistDemoSnapshot();
   paint();
 }
@@ -99,6 +104,70 @@ function restoreEditorDraft() {
     const control = root.querySelector(`#${id}`);
     if (control && values[key] !== undefined) control.value = values[key];
   }
+}
+
+function captureDirectoryDraft() {
+  const form = root.querySelector("[data-directory-form]");
+  if (!form) return null;
+  const value = id => root.querySelector(`#${id}`)?.value ?? "";
+  const checked = id => Boolean(root.querySelector(`#${id}`)?.checked);
+  const kind = form.dataset.directoryKind;
+  if (kind === "student") return { kind, firstName: value("directoryStudentFirst"), lastName: value("directoryStudentLast"), classroom: value("directoryStudentClassroom"), teacherName: value("directoryStudentTeacher"), active: checked("directoryStudentActive"), paceEnabled: checked("directoryStudentPace"), dailyPulseEnabled: checked("directoryStudentPulse") };
+  return { kind, name: value("directoryStaffName"), email: value("directoryStaffEmail"), classroom: value("directoryStaffClassroom"), program: value("directoryStaffProgram"), roles: [...root.querySelectorAll("[data-directory-role]:checked")].map(control => control.dataset.directoryRole), active: checked("directoryStaffActive") };
+}
+
+function restoreDirectoryDraft() {
+  const draft = state.directoryUi.draft;
+  if (!draft || !root.querySelector("[data-directory-form]")) return;
+  const set = (id, value) => { const control = root.querySelector(`#${id}`); if (control && value !== undefined) control.value = value; };
+  const check = (id, value) => { const control = root.querySelector(`#${id}`); if (control && value !== undefined) control.checked = Boolean(value); };
+  if (draft.kind === "student") { set("directoryStudentFirst", draft.firstName); set("directoryStudentLast", draft.lastName); set("directoryStudentClassroom", draft.classroom); set("directoryStudentTeacher", draft.teacherName); check("directoryStudentActive", draft.active); check("directoryStudentPace", draft.paceEnabled); check("directoryStudentPulse", draft.dailyPulseEnabled); }
+  else { set("directoryStaffName", draft.name); set("directoryStaffEmail", draft.email); set("directoryStaffClassroom", draft.classroom); set("directoryStaffProgram", draft.program); check("directoryStaffActive", draft.active); for (const control of root.querySelectorAll("[data-directory-role]")) control.checked = draft.roles?.includes(control.dataset.directoryRole) ?? false; }
+}
+
+function directoryRecord(kind, id) { return state.directory[kind === "student" ? "students" : "staff"].find(item => item.id === id); }
+function directoryComparable(record, kind) {
+  if (kind === "student") return { firstName: record.firstName, lastName: record.lastName, name: record.name, classroom: record.classroom, teacherName: record.teacherName, active: record.active, paceEnabled: record.paceEnabled, dailyPulseEnabled: record.dailyPulseEnabled };
+  return { name: record.name, email: record.email, roles: record.roles, active: record.active, classroom: record.classroom, program: record.program };
+}
+
+function directoryFormDirty() {
+  const task = state.directoryUi.task; const draft = captureDirectoryDraft();
+  if (!task || !draft) return false;
+  if (task.mode === "add") {
+    const fields = task.kind === "student" ? ["firstName", "lastName", "classroom", "teacherName"] : ["name", "email", "classroom", "program"];
+    return fields.some(key => String(draft[key] ?? "").trim() !== "");
+  }
+  const record = directoryRecord(task.kind, task.id); return record ? JSON.stringify(directoryComparable(record, task.kind)) !== JSON.stringify(task.kind === "student" ? { firstName: draft.firstName.trim(), lastName: draft.lastName.trim(), name: `${draft.firstName.trim()} ${draft.lastName.trim()}`.trim(), classroom: draft.classroom.trim(), teacherName: draft.teacherName.trim(), active: draft.active, paceEnabled: draft.paceEnabled, dailyPulseEnabled: draft.dailyPulseEnabled } : { name: draft.name.trim(), email: draft.email.trim().toLowerCase(), roles: draft.roles, active: draft.active, classroom: draft.classroom.trim(), program: draft.program.trim() }) : false;
+}
+
+function clearDirectoryTask() { state.directoryUi.task = null; state.directoryUi.draft = null; state.directoryUi.duplicate = ""; state.directoryUi.allowDuplicate = false; }
+
+function directoryDraftFromForm(kind) {
+  const draft = captureDirectoryDraft();
+  if (kind === "student") return { firstName: draft.firstName, lastName: draft.lastName, classroom: draft.classroom, teacherName: draft.teacherName, active: draft.active, paceEnabled: draft.paceEnabled, dailyPulseEnabled: draft.dailyPulseEnabled };
+  return { name: draft.name, email: draft.email, roles: draft.roles, active: draft.active, classroom: draft.classroom, program: draft.program };
+}
+
+function saveDirectoryFromForm() {
+  const task = state.directoryUi.task; if (!task || !root.querySelector("[data-directory-form]")) return;
+  const draft = directoryDraftFromForm(task.kind); const result = task.kind === "student" ? validateStudentDraft(draft) : validateStaffDraft(draft);
+  if (result.errors.length) { state.directoryUi.notice = { tone: "error", text: result.errors.join(" ") }; state.directoryUi.draft = { kind: task.kind, ...draft }; paint(); return; }
+  const record = task.mode === "edit" ? directoryRecord(task.kind, task.id) : null;
+  const matches = task.kind === "student" ? studentDuplicateMatches(state.directory.students, result.value.name, record?.id) : staffDuplicateMatches(state.directory.staff, result.value.email, record?.id);
+  if (matches.length && !state.directoryUi.allowDuplicate) { state.directoryUi.duplicate = matches.map(item => item.name).join(", "); state.directoryUi.draft = { kind: task.kind, ...draft }; paint(); return; }
+  try {
+    if (record) state.directory = recordDirectoryChange(state.directory, task.kind, record.id, { action: "Updated", actor: state.userName || "Demo Administrator", reason: "Directory profile updated", previous: directoryComparable(record, task.kind), current: result.value });
+    else state.directory = addDirectoryRecord(state.directory, task.kind, result.value, state.userName || "Demo Administrator");
+    persistDemoSnapshot(); clearDirectoryTask(); state.directoryUi.notice = { tone: "success", text: `${task.kind === "student" ? "Student" : "Staff member"} ${record ? "updated" : "added"} successfully. Historical records remain unchanged.` }; paint();
+  } catch (error) { state.directoryUi.notice = { tone: "error", text: error.message }; state.directoryUi.draft = { kind: task.kind, ...draft }; paint(); }
+}
+
+function saveDirectoryLifecycle() {
+  const task = state.directoryUi.task; const record = task && directoryRecord(task.kind, task.id); if (!record) return;
+  const active = !record.active; const reason = root.querySelector("#directoryReason")?.value.trim() || (active ? "Directory record activated" : "Directory record deactivated");
+  state.directory = recordDirectoryChange(state.directory, task.kind, record.id, { action: active ? "Activated" : "Deactivated", actor: state.userName || "Demo Administrator", reason, previous: directoryComparable(record, task.kind), current: { active } });
+  persistDemoSnapshot(); clearDirectoryTask(); state.directoryUi.notice = { tone: "success", text: `${task.kind === "student" ? "Student" : "Staff member"} ${active ? "activated" : "deactivated"}. Historical records remain unchanged.` }; paint();
 }
 
 function apiBool(value) { return value === true || ["yes", "true", "1"].includes(String(value ?? "").trim().toLowerCase()); }
@@ -172,6 +241,24 @@ async function boot() {
 }
 
 document.addEventListener("click", async event => {
+  const directoryOpen = event.target.closest("[data-directory-open]");
+  if (directoryOpen) { clearDirectoryTask(); go(`roster/${directoryOpen.dataset.directoryOpen === "staff" ? "staff" : "students"}/${encodeURIComponent(directoryOpen.dataset.directoryId)}`); return; }
+  const directoryAction = event.target.closest("[data-directory-action]");
+  if (directoryAction) {
+    const action = directoryAction.dataset.directoryAction; const route = currentRoute();
+    if (action === "open-add-student") { clearDirectoryTask(); state.directoryUi.task = { kind: "student", mode: "add" }; state.directoryUi.notice = null; paint(); return; }
+    if (action === "open-add-staff") { clearDirectoryTask(); state.directoryUi.task = { kind: "staff", mode: "add" }; state.directoryUi.notice = null; paint(); return; }
+    if (action === "open-edit-student" && route.page === "roster-student-detail") { clearDirectoryTask(); state.directoryUi.task = { kind: "student", mode: "edit", id: route.id }; state.directoryUi.notice = null; paint(); return; }
+    if (action === "open-edit-staff" && route.page === "roster-staff-detail") { clearDirectoryTask(); state.directoryUi.task = { kind: "staff", mode: "edit", id: route.id }; state.directoryUi.notice = null; paint(); return; }
+    if (action === "open-student-lifecycle" && route.page === "roster-student-detail") { clearDirectoryTask(); state.directoryUi.task = { kind: "student", mode: "lifecycle", id: route.id }; state.directoryUi.notice = null; paint(); return; }
+    if (action === "open-staff-lifecycle" && route.page === "roster-staff-detail") { clearDirectoryTask(); state.directoryUi.task = { kind: "staff", mode: "lifecycle", id: route.id }; state.directoryUi.notice = null; paint(); return; }
+    if (action === "toggle-sort") { state.directoryUi.sortDirection = state.directoryUi.sortDirection === "asc" ? "desc" : "asc"; paint(); return; }
+    if (action === "confirm-duplicate") { state.directoryUi.allowDuplicate = true; state.directoryUi.duplicate = ""; saveDirectoryFromForm(); return; }
+    if (action === "save-directory") { saveDirectoryFromForm(); return; }
+    if (action === "save-lifecycle") { saveDirectoryLifecycle(); return; }
+    if (action === "close-task") { if (directoryFormDirty() && !window.confirm("Discard unsaved directory changes?")) return; clearDirectoryTask(); state.directoryUi.notice = null; paint(); return; }
+  }
+  if (event.target.closest("[data-directory-dismiss]") && state.demo) { if (directoryFormDirty() && !window.confirm("Discard unsaved directory changes?")) return; clearDirectoryTask(); state.directoryUi.notice = null; paint(); return; }
   const modalAction = event.target.closest("[data-modal-action]");
   if (modalAction) {
     const action = modalAction.dataset.modalAction;
@@ -299,13 +386,23 @@ document.addEventListener("change", async event => {
   }
   const filter = event.target.closest("[data-activity-filter]");
   if (filter) { state.activityFilters[filter.dataset.activityFilter] = filter.value; paint(); }
+  if (event.target.id === "directoryStatus") { state.directoryUi.status = event.target.value; paint(); }
+  if (event.target.id === "directoryRole") { state.directoryUi.role = event.target.value; paint(); }
+  if (event.target.id === "directorySort") { state.directoryUi.sortField = event.target.value; paint(); }
 });
 
 document.addEventListener("input", event => {
   if (event.target.id === "studentsSearch") { state.studentsSearch = event.target.value; paint(); }
   const filter = event.target.closest("[data-activity-filter]");
   if (filter && filter.tagName === "INPUT") { state.activityFilters[filter.dataset.activityFilter] = filter.value; paint(); }
+  if (event.target.id === "directorySearch") { state.directoryUi.search = event.target.value; paint(); }
 });
 
-window.addEventListener("hashchange", () => { state.activeVisitId = null; state.editorDraft = null; paint(); });
+document.addEventListener("submit", event => {
+  const form = event.target.closest("[data-directory-form]");
+  if (!form || !state.demo) return;
+  event.preventDefault(); saveDirectoryFromForm();
+});
+
+window.addEventListener("hashchange", () => { state.activeVisitId = null; state.editorDraft = null; clearDirectoryTask(); paint(); });
 boot();

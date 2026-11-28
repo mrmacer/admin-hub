@@ -1,28 +1,31 @@
 import { currentRoute } from "./router.js";
 import { DEMO_MODE_NOTICE } from "./demo-data.js";
 import { renderActivity, renderHome, renderOverview, renderStudentDetail, renderStudents } from "./modules/pace/pace-views.js";
+import { renderDirectory } from "./modules/directory/directory-views.js";
 
-const nav = [{ page: "home", label: "Home", icon: "⌂" }, { page: "pace", label: "PACE Overview", icon: "P" }, { page: "students", label: "Students", icon: "S" }, { page: "activity", label: "Activity Log", icon: "≡" }, { label: "Student Roster", icon: "R", disabled: true }, { label: "Teachers", icon: "T", disabled: true }];
+const nav = [{ page: "home", label: "Home", icon: "⌂" }, { page: "pace", label: "PACE Overview", icon: "P" }, { page: "students", label: "Students", icon: "S" }, { page: "activity", label: "Activity Log", icon: "≡" }, { page: "roster", label: "Student Roster", icon: "R", directory: true }, { page: "teachers", label: "Teachers & Staff", icon: "T", directory: true }];
 
-function navItem(item, route) {
-  if (item.disabled) return `<div class="nav-item disabled-nav" aria-disabled="true"><span class="nav-icon">${item.icon}</span>${item.label}<span class="soon">Soon</span></div>`;
-  const href = `#/${item.page === "home" ? "home" : item.page === "pace" ? "pace" : `pace/${item.page}`}`;
-  const active = route.page === item.page || (item.page === "pace" && ["student-detail"].includes(route.page));
+function navItem(item, route, demo) {
+  if (item.directory && !demo) return `<div class="nav-item disabled-nav" aria-disabled="true"><span class="nav-icon">${item.icon}</span>${item.label}<span class="soon">Demo only</span></div>`;
+  const href = item.directory ? `#/roster/${item.page === "teachers" ? "teachers" : "students"}` : `#/${item.page === "home" ? "home" : item.page === "pace" ? "pace" : `pace/${item.page}`}`;
+  const active = route.page === item.page || (item.page === "roster" && ["roster-students", "roster-student-detail"].includes(route.page)) || (item.page === "teachers" && ["roster-teachers", "roster-staff-detail"].includes(route.page)) || (item.page === "pace" && ["student-detail"].includes(route.page));
   return `<a class="nav-item ${active ? "active" : ""}" href="${href}" data-nav><span class="nav-icon">${item.icon}</span>${item.label}</a>`;
 }
 
 function shell(state, content) {
   const route = currentRoute();
-  return `<div class="app-frame">${state.demo ? `<div class="demo-banner">${DEMO_MODE_NOTICE}</div>` : ""}<aside class="sidebar"><div class="brand"><img src="assets/iu29-logo.png" alt="IU29" class="brand-logo-img"><div class="brand-text"><strong>Admin Hub</strong><span>PACE Operations &amp; Insights</span></div></div><nav aria-label="Main navigation"><div class="nav-label">PACE workspace</div>${nav.map(item => navItem(item, route)).join("")}</nav><div class="sidebar-footer"><span class="status-dot"></span><span>${state.demo ? "Synthetic workspace" : "Connected"}</span></div></aside><main class="main-content"><header class="topbar"><div class="mobile-brand"><img src="assets/iu29-logo.png" alt="IU29" class="mobile-logo"><strong>Admin Hub</strong></div><div class="topbar-heading"><span>IU29</span><strong>PACE Operations &amp; Insights</strong></div><div class="topbar-spacer"></div><div class="user-menu"><span class="user-avatar">${(state.userName || "A").slice(0, 1).toUpperCase()}</span><span>${state.userName || "Administrator"}</span>${state.demo ? `<button id="resetDemo" class="text-button">Reset demo data</button>` : `<button id="signOut" class="text-button">Sign out</button>`}</div></header><div class="content-wrap">${content}</div></main></div>`;
+  return `<div class="app-frame">${state.demo ? `<div class="demo-banner">${DEMO_MODE_NOTICE}</div>` : ""}<aside class="sidebar"><div class="brand"><img src="assets/iu29-logo.png" alt="IU29" class="brand-logo-img"><div class="brand-text"><strong>Admin Hub</strong><span>PACE Operations &amp; Insights</span></div></div><nav aria-label="Main navigation"><div class="nav-label">PACE workspace</div>${nav.map(item => navItem(item, route, state.demo)).join("")}</nav><div class="sidebar-footer"><span class="status-dot"></span><span>${state.demo ? "Synthetic workspace" : "Connected"}</span></div></aside><main class="main-content"><header class="topbar"><div class="mobile-brand"><img src="assets/iu29-logo.png" alt="IU29" class="mobile-logo"><strong>Admin Hub</strong></div><div class="topbar-heading"><span>IU29</span><strong>PACE Operations &amp; Insights</strong></div><div class="topbar-spacer"></div><div class="user-menu"><span class="user-avatar">${(state.userName || "A").slice(0, 1).toUpperCase()}</span><span>${state.userName || "Administrator"}</span>${state.demo ? `<button id="resetDemo" class="text-button">Reset demo data</button>` : `<button id="signOut" class="text-button">Sign out</button>`}</div></header><div class="content-wrap">${content}</div></main></div>`;
 }
 
 export function renderApp(state) {
   const route = currentRoute(); const activeVisit = state.activeVisitId ? state.visits.find(visit => visit.id === state.activeVisitId) : null;
+  const directory = state.directory ?? { students: [], staff: [] };
   let content = renderHome(state.visits, state.range, state.followUps, activeVisit, state.demo, {}, state.adminReviews, state.mutationError, state.production, state);
   if (route.page === "pace") content = renderOverview(state.visits, state.range, state.followUps, activeVisit, state.demo, {}, state.adminReviews, state.mutationError, state.production, state);
   if (route.page === "students") content = renderStudents(state.visits, state.range, state, activeVisit);
   if (route.page === "student-detail") content = renderStudentDetail(state.visits, state.range, route.student, state.followUps, activeVisit, state.demo, state.adminReviews, state.mutationError, state.production, state);
   if (route.page === "activity") content = renderActivity(state.visits, state.range, state, activeVisit);
+  if (["roster-students", "roster-student-detail", "roster-teachers", "roster-staff-detail"].includes(route.page)) content = renderDirectory(route, directory, state.visits, state.directoryUi, state.demo);
   return shell(state, content);
 }
 

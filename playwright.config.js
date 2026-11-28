@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./test",
-  testMatch: "**/editor-browser.spec.js",
+  testMatch: "**/*-browser.spec.js",
   timeout: 70000,
   use: {
     baseURL: process.env.BASE_URL ?? "http://127.0.0.1:4175",
